@@ -26,7 +26,6 @@
 - **Song Seek Progress**  
 - **Volume Slider**  
 - **LED Indicator Light**  
-
 ---
 
 ## 🛠️ TODO Features
@@ -47,6 +46,9 @@
 - **Brightness Fix for OLED 1309**  
   Resolve brightness control issues with the display. Seems im not the only one with this issue on this paticular board.
   `https://forum.pjrc.com/index.php?threads/how-does-one-control-the-brightness-of-an-oled-display-ssd1309.29265/`
+
+- **Fast Charging**
+  Will be utilizing an existing fast charger to be torn down and used in this project for simplicity.
 
 ---
 
