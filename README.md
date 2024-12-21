@@ -52,4 +52,6 @@
 
 ---
 
+Additional Notes:
 Current Stereo Trim is for a BMW E36, but device can be used as a indepedent stereo, will make custom faceplates upon request in the repo. 🚗🎶
+This project assumes you have pulseaudio and the dac in a working state, with the dac set as the default sink, aswell as pulseaudio running on boot.
