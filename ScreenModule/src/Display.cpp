@@ -18,44 +18,29 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, OLED_MOSI, OLED_CLK, OLED_
 #define SW 2
 #define LED_PIN 7
 
-int lastStateCLK;
-int currentStateCLK;
-int lastStateDT;
-int currentStateDT;
-int lastButtonState;
-unsigned long buttonPressStartTime = 0;
-unsigned long lastButtonPressTime = 0;
-bool longPressHandled = false;
-const unsigned long doubleClickThreshold = 300;
-const unsigned long longPressThreshold = 2000;
+int lastStateCLK,currentStateCLK,lastStateDT,currentStateDT,lastButtonState;
+unsigned long buttonPressStartTime=0,lastButtonPressTime=0,lastSongUpdateTime=0,lastRapidClickTime=0;
+bool longPressHandled=false,isPlaying=true,isBTConnected=true,inMenu=false,displayOn=true;
+const unsigned long doubleClickThreshold=300,longPressThreshold=2000,rapidClickInterval=500;
+String songName="";
+int songPixelLength=0,currentPosition=0,volume=50,menuIndex=0,subMenuIndex=0,brightnessLevel=50,contrastLevel=50,encoderAccum=0,rapidClickCount=0;
 
-String songName = "";
-int songPixelLength = 0;
-int currentPosition = 0;
-int volume = 50;
-bool isPlaying = true;
-bool isBTConnected = true;
-bool inMenu = false;
-int menuIndex = 0;
-int subMenuIndex = 0;
-int brightnessLevel=50;
-int contrastLevel=50;
 
-enum MenuState {MAIN_MENU,TUNER_MENU,DISPLAY_MENU,DISPLAY_BRIGHTNESS,DISPLAY_CONTRAST};
+
+
+enum MenuState{MAIN_MENU,TUNER_MENU,DISPLAY_MENU,DISPLAY_BRIGHTNESS,DISPLAY_CONTRAST,SYSTEM_MENU};
 MenuState currentMenuState=MAIN_MENU;
 
-const char* mainMenuItems[]={"Tuner","Display"};
-const int mainMenuCount=2;
+const char* mainMenuItems[]={"Tuner","Display","System"};
+const int mainMenuCount=3;
 const char* tunerItems[]={"Bass","Treble","Loudness"};
 const int tunerCount=3;
 const char* displayItems[]={"Brightness"};
 const int displayCount=1;
+const char* systemItems[]={"Restart Service"};
+const int systemCount=1;
 
-int encoderAccum=0;
-bool displayOn = true;
-int rapidClickCount = 0;
-unsigned long lastRapidClickTime = 0;
-const unsigned long rapidClickInterval = 500; // 500ms to accumulate up to 5 clicks
+
 
 void applyDisplaySettings() {
   // With the Adafruit_SSD1306 library, you can send commands directly:
@@ -115,38 +100,24 @@ void handleSerialInput(String input) {
   }
 }
 
-void navigateMenu(int direction) {
+void navigateMenu(int d){
   if(!inMenu)return;
-  if(currentMenuState==MAIN_MENU){
-    menuIndex+=direction;
-    if(menuIndex<0)menuIndex=mainMenuCount-1;
-    if(menuIndex>=mainMenuCount)menuIndex=0;
-  } else if(currentMenuState==TUNER_MENU){
-    subMenuIndex+=direction;
-    if(subMenuIndex<0)subMenuIndex=tunerCount-1;
-    if(subMenuIndex>=tunerCount)subMenuIndex=0;
-  } else if(currentMenuState==DISPLAY_MENU){
-    subMenuIndex+=direction;
-    if(subMenuIndex<0)subMenuIndex=displayCount-1;
-    if(subMenuIndex>=displayCount)subMenuIndex=0;
-  } else if(currentMenuState==DISPLAY_BRIGHTNESS){
-    brightnessLevel+=direction;
-    if(brightnessLevel<0)brightnessLevel=0;
-    if(brightnessLevel>100)brightnessLevel=100;
-    applyDisplaySettings();
-  } 
+  if(currentMenuState==MAIN_MENU){menuIndex+=d;if(menuIndex<0)menuIndex=mainMenuCount-1;if(menuIndex>=mainMenuCount)menuIndex=0;}
+  else if(currentMenuState==TUNER_MENU){subMenuIndex+=d;if(subMenuIndex<0)subMenuIndex=tunerCount-1;if(subMenuIndex>=tunerCount)subMenuIndex=0;}
+  else if(currentMenuState==DISPLAY_MENU){subMenuIndex+=d;if(subMenuIndex<0)subMenuIndex=displayCount-1;if(subMenuIndex>=displayCount)subMenuIndex=0;}
+  else if(currentMenuState==SYSTEM_MENU){subMenuIndex+=d;if(subMenuIndex<0)subMenuIndex=systemCount-1;if(subMenuIndex>=systemCount)subMenuIndex=0;}
+  else if(currentMenuState==DISPLAY_BRIGHTNESS){brightnessLevel+=d;if(brightnessLevel<0)brightnessLevel=0;if(brightnessLevel>100)brightnessLevel=100;applyDisplaySettings();}
 }
 
-void handleMenuClick() {
+void handleMenuClick(){
   if(!inMenu)return;
   if(currentMenuState==MAIN_MENU){
     if(menuIndex==0){currentMenuState=TUNER_MENU;subMenuIndex=0;}
     else if(menuIndex==1){currentMenuState=DISPLAY_MENU;subMenuIndex=0;}
-  } else if(currentMenuState==DISPLAY_MENU){
-    if(subMenuIndex==0)currentMenuState=DISPLAY_BRIGHTNESS;
-  }
+    else if(menuIndex==2){currentMenuState=SYSTEM_MENU;subMenuIndex=0;}
+  }else if(currentMenuState==DISPLAY_MENU)if(subMenuIndex==0)currentMenuState=DISPLAY_BRIGHTNESS;
+  else if(currentMenuState==SYSTEM_MENU)if(subMenuIndex==0)Serial.println("RESTART_SERVICE");
 }
-
 void handleDoubleClick() {
   if(!inMenu){
     inMenu=true;
@@ -200,57 +171,90 @@ void drawValueMenu(String title,int value) {
   display.display();
 }
 
-void displayMenu() {
-  if(currentMenuState==MAIN_MENU) drawMenu(mainMenuItems,mainMenuCount,menuIndex);
-  else if(currentMenuState==TUNER_MENU) drawMenu(tunerItems,tunerCount,subMenuIndex);
-  else if(currentMenuState==DISPLAY_MENU) drawMenu(displayItems,displayCount,subMenuIndex);
-  else if(currentMenuState==DISPLAY_BRIGHTNESS) drawValueMenu("Brightness",brightnessLevel);
-  else if(currentMenuState==DISPLAY_CONTRAST) drawValueMenu("Contrast",contrastLevel);
+void displayMenu(){
+  if(currentMenuState==MAIN_MENU)drawMenu(mainMenuItems,mainMenuCount,menuIndex);
+  else if(currentMenuState==TUNER_MENU)drawMenu(tunerItems,tunerCount,subMenuIndex);
+  else if(currentMenuState==DISPLAY_MENU)drawMenu(displayItems,displayCount,subMenuIndex);
+  else if(currentMenuState==DISPLAY_BRIGHTNESS)drawValueMenu("Brightness",brightnessLevel);
+  else if(currentMenuState==DISPLAY_CONTRAST)drawValueMenu("Contrast",contrastLevel);
+  else if(currentMenuState==SYSTEM_MENU)drawMenu(systemItems,systemCount,subMenuIndex);
 }
-
-
 void displayUI() {
   if (!displayOn) {
     // If display is off, do nothing
     return;
   }
 
-  if (inMenu) { displayMenu(); return; }
+  if (inMenu) {
+    displayMenu();
+    return;
+  }
+
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
+
+  // Draw seek line at the very top of the screen with buffer
+  int seekLineWidth = map(currentPosition, 2, 100, 2, 128); // Ensure no 0 or 1 value appears incorrectly
+  if (seekLineWidth > 2)
+    display.drawLine(0, 0, seekLineWidth, 0, SSD1306_WHITE);
+
   int sep = songName.indexOf(" - ");
   String artist = "";
   String song = "";
   if (sep != -1) {
     artist = songName.substring(0, sep);
     song = songName.substring(sep + 3);
-  } else song = songName;
+  } else {
+    song = songName;
+  }
+
   int songW = song.length() * 6;
   int songX = (SCREEN_WIDTH - songW) / 2;
-  display.setCursor(songX, 0);
-  if (song.length() > 21) boldText(song.substring(0, 21));
-  else boldText(song);
+  display.setCursor(songX, 2);
+  if (song.length() > 21)
+    boldText(song.substring(0, 21));
+  else
+    boldText(song);
+
   if (sep != -1) {
     int artistW = artist.length() * 6;
     int artistX = (SCREEN_WIDTH - artistW) / 2;
-    display.setCursor(artistX, 10);
-    if (artist.length() > 21) display.print(artist.substring(0, 21));
-    else display.print(artist);
+    display.setCursor(artistX, 12);
+    if (artist.length() > 21)
+      display.print(artist.substring(0, 21));
+    else
+      display.print(artist);
   }
-  display.drawRect(0, 20, 128, 4, SSD1306_WHITE);
-  int seekBarWidth = map(currentPosition, 0, 100, 0, 128);
-  display.fillRect(0, 21, seekBarWidth, 2, SSD1306_WHITE);
+
+  // Reuse the old seek bar as a volume bar, centered on the value text
+  int volumeBarWidth = map(volume, 0, 100, 0, 90); // Adjusted to avoid overlap with BT
+  display.fillRect(18, 28, volumeBarWidth, 2, SSD1306_WHITE); // Centered line with BT text
+
+  // Smaller text for volume percentage (no "V:" and "%")
   display.setCursor(0, 24);
-  display.print("V: "); display.print(volume); display.print("%");
-  display.setCursor(92, 24);
-  display.print(isBTConnected ? "BT:ON" : "BT:OFF");
+  display.print(volume);
+
+  // Play/pause indicator above volume bar
   int playPauseX = (SCREEN_WIDTH - 6) / 2;
-  int playPauseY = 25;
-  if (isPlaying) display.drawBitmap(playPauseX, playPauseY, playIconLeft, 6, 6, SSD1306_WHITE);
-  else { display.setCursor(playPauseX, playPauseY); boldText("="); }
+  int playPauseY = 21;
+  if (isPlaying)
+    display.setCursor(playPauseX, playPauseY);
+  else {
+     display.drawBitmap(playPauseX, playPauseY, playIconLeft, 6, 6, SSD1306_WHITE);
+    
+    boldText("=");
+  }
+
+  // Smaller BT indicator moved up by 1 pixel
+  display.setCursor(SCREEN_WIDTH - 18, 24); // Moved to avoid overlap
+  display.print("BT");
+
   display.display();
 }
+
+
+
 void controlLED(unsigned long currentTime) {
   static bool isFlashing=false;
   static bool ledOn=true;
@@ -361,6 +365,7 @@ void handleInputs(unsigned long currentTime) {
 }
 
 void setup() {
+  delay(100);
   Serial.begin(9600);
   pinMode(CLK,INPUT);
   pinMode(DT,INPUT);

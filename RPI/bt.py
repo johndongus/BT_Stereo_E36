@@ -319,6 +319,8 @@ class BluetoothManager:
             self.control_playback("ff")
         elif data == "RW":
             self.control_playback("rw")
+        elif data == "RESTART_SERVICE":
+            os.system("systemctl restart bt-pulseaudio.service")
         elif data.startswith("VOL+") or data.startswith("VOL-"):
             try:
                 volume_level = int(data[4:])
@@ -363,7 +365,7 @@ class BluetoothManager:
             logging.warning("Duration not set. Cannot calculate seek percentage.")
 
     def set_volume(self, level):
- 
+
         if 0 <= level <= 100:
             scaled_volume = level * 2  # Maps 0-100 to 0-100
             scaled_volume_str = f"{scaled_volume}"  # Format as percentage string
