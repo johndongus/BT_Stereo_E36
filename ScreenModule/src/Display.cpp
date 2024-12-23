@@ -25,10 +25,12 @@ const unsigned long doubleClickThreshold=300,longPressThreshold=2000,rapidClickI
 String songName="";
 int songPixelLength=0,currentPosition=0,volume=50,menuIndex=0,subMenuIndex=0,brightnessLevel=50,contrastLevel=50,encoderAccum=0,rapidClickCount=0;
 
+String deviceName = "NONE";
 
 
 
-enum MenuState{MAIN_MENU,TUNER_MENU,DISPLAY_MENU,DISPLAY_BRIGHTNESS,DISPLAY_CONTRAST,SYSTEM_MENU};
+
+enum MenuState{MAIN_MENU,TUNER_MENU,DISPLAY_MENU,DISPLAY_BRIGHTNESS,DISPLAY_CONTRAST,SYSTEM_MENU,DEVICE_NAME_MENU};
 MenuState currentMenuState=MAIN_MENU;
 
 const char* mainMenuItems[]={"Tuner","Display","System"};
@@ -37,8 +39,8 @@ const char* tunerItems[]={"Bass","Treble","Loudness"};
 const int tunerCount=3;
 const char* displayItems[]={"Brightness"};
 const int displayCount=1;
-const char* systemItems[]={"Restart Service"};
-const int systemCount=1;
+const char* systemItems[] = {"Restart Service", "Device Name"};
+const int systemCount = 2;
 
 
 
@@ -105,19 +107,50 @@ void navigateMenu(int d){
   if(currentMenuState==MAIN_MENU){menuIndex+=d;if(menuIndex<0)menuIndex=mainMenuCount-1;if(menuIndex>=mainMenuCount)menuIndex=0;}
   else if(currentMenuState==TUNER_MENU){subMenuIndex+=d;if(subMenuIndex<0)subMenuIndex=tunerCount-1;if(subMenuIndex>=tunerCount)subMenuIndex=0;}
   else if(currentMenuState==DISPLAY_MENU){subMenuIndex+=d;if(subMenuIndex<0)subMenuIndex=displayCount-1;if(subMenuIndex>=displayCount)subMenuIndex=0;}
-  else if(currentMenuState==SYSTEM_MENU){subMenuIndex+=d;if(subMenuIndex<0)subMenuIndex=systemCount-1;if(subMenuIndex>=systemCount)subMenuIndex=0;}
-  else if(currentMenuState==DISPLAY_BRIGHTNESS){brightnessLevel+=d;if(brightnessLevel<0)brightnessLevel=0;if(brightnessLevel>100)brightnessLevel=100;applyDisplaySettings();}
+ else if (currentMenuState == SYSTEM_MENU) {
+    if (subMenuIndex == 0) {
+        Serial.println("RESTART_SERVICE");
+    } else if (subMenuIndex == 1) {
+        Serial.println("DEVICE_NAME");
+    }
+}
+else if(currentMenuState==DISPLAY_BRIGHTNESS){brightnessLevel+=d;if(brightnessLevel<0)brightnessLevel=0;if(brightnessLevel>100)brightnessLevel=100;applyDisplaySettings();}
 }
 
-void handleMenuClick(){
-  if(!inMenu)return;
-  if(currentMenuState==MAIN_MENU){
-    if(menuIndex==0){currentMenuState=TUNER_MENU;subMenuIndex=0;}
-    else if(menuIndex==1){currentMenuState=DISPLAY_MENU;subMenuIndex=0;}
-    else if(menuIndex==2){currentMenuState=SYSTEM_MENU;subMenuIndex=0;}
-  }else if(currentMenuState==DISPLAY_MENU)if(subMenuIndex==0)currentMenuState=DISPLAY_BRIGHTNESS;
-  else if(currentMenuState==SYSTEM_MENU)if(subMenuIndex==0)Serial.println("RESTART_SERVICE");
+
+
+void handleMenuClick() {
+  if(!inMenu) return;
+
+  if(currentMenuState == MAIN_MENU) {
+    if(menuIndex == 0) {
+      currentMenuState = TUNER_MENU;
+      subMenuIndex = 0;
+    } else if(menuIndex == 1) {
+      currentMenuState = DISPLAY_MENU;
+      subMenuIndex = 0;
+    } else if(menuIndex == 2) {
+      currentMenuState = SYSTEM_MENU;
+      subMenuIndex = 0;
+    }
+  }
+  else if(currentMenuState == DISPLAY_MENU) {
+    if(subMenuIndex == 0) {
+      currentMenuState = DISPLAY_BRIGHTNESS;
+    }
+  }
+  else if(currentMenuState == SYSTEM_MENU) {
+    // "Restart Service"
+    if(subMenuIndex == 0) {
+      Serial.println("RESTART_SERVICE");
+    }
+    // "Device Name" => jump to new screen
+    else if(subMenuIndex == 1) {
+      currentMenuState = DEVICE_NAME_MENU;
+    }
+  }
 }
+
 void handleDoubleClick() {
   if(!inMenu){
     inMenu=true;
@@ -171,17 +204,55 @@ void drawValueMenu(String title,int value) {
   display.display();
 }
 
-void displayMenu(){
-  if(currentMenuState==MAIN_MENU)drawMenu(mainMenuItems,mainMenuCount,menuIndex);
-  else if(currentMenuState==TUNER_MENU)drawMenu(tunerItems,tunerCount,subMenuIndex);
-  else if(currentMenuState==DISPLAY_MENU)drawMenu(displayItems,displayCount,subMenuIndex);
-  else if(currentMenuState==DISPLAY_BRIGHTNESS)drawValueMenu("Brightness",brightnessLevel);
-  else if(currentMenuState==DISPLAY_CONTRAST)drawValueMenu("Contrast",contrastLevel);
-  else if(currentMenuState==SYSTEM_MENU)drawMenu(systemItems,systemCount,subMenuIndex);
+void drawValueMenu_S(String title, String textValue) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  // Center the title
+  display.setCursor((128 - (title.length() * 6)) / 2, 0);
+  display.print(title);
+
+  // Center the textValue
+  display.setCursor((128 - (textValue.length() * 6)) / 2, 12);
+  display.print(textValue);
+
+  display.display();
 }
+void displayMenu() {
+  if(currentMenuState == MAIN_MENU) {
+    drawMenu(mainMenuItems, mainMenuCount, menuIndex);
+  }
+  else if(currentMenuState == TUNER_MENU) {
+    drawMenu(tunerItems, tunerCount, subMenuIndex);
+  }
+  else if(currentMenuState == DISPLAY_MENU) {
+    drawMenu(displayItems, displayCount, subMenuIndex);
+  }
+  else if(currentMenuState == DISPLAY_BRIGHTNESS) {
+    drawValueMenu("Brightness", brightnessLevel);
+  }
+  else if(currentMenuState == DISPLAY_CONTRAST) {
+    drawValueMenu("Contrast", contrastLevel);
+  }
+  else if(currentMenuState == SYSTEM_MENU) {
+    drawMenu(systemItems, systemCount, subMenuIndex);
+  }
+  else if(currentMenuState == DEVICE_NAME_MENU) {
+  
+    drawValueMenu_S("Device Name", deviceName);
+  }
+}
+
+
+int songScrollOffset = 0;
+int artistScrollOffset = 0;
+unsigned long lastScrollUpdate = 0;
+const unsigned long scrollInterval = 150;
+
+
 void displayUI() {
   if (!displayOn) {
-    // If display is off, do nothing
     return;
   }
 
@@ -190,15 +261,21 @@ void displayUI() {
     return;
   }
 
+  
+  display.setTextWrap(false);
+
+ 
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  // Draw seek line at the very top of the screen with buffer
-  int seekLineWidth = map(currentPosition, 2, 100, 2, 128); // Ensure no 0 or 1 value appears incorrectly
-  if (seekLineWidth > 2)
-    display.drawLine(0, 0, seekLineWidth, 0, SSD1306_WHITE);
 
+  int seekLineWidth = map(currentPosition, 2, 100, 2, 128);
+  if (seekLineWidth > 2) {
+    display.drawLine(0, 0, seekLineWidth, 0, SSD1306_WHITE);
+  }
+
+  
   int sep = songName.indexOf(" - ");
   String artist = "";
   String song = "";
@@ -209,50 +286,109 @@ void displayUI() {
     song = songName;
   }
 
-  int songW = song.length() * 6;
-  int songX = (SCREEN_WIDTH - songW) / 2;
-  display.setCursor(songX, 2);
-  if (song.length() > 21)
-    boldText(song.substring(0, 21));
-  else
-    boldText(song);
+ 
+  unsigned long currentTime = millis();
+  if (currentTime - lastScrollUpdate > scrollInterval) {
+    lastScrollUpdate = currentTime;
 
-  if (sep != -1) {
-    int artistW = artist.length() * 6;
-    int artistX = (SCREEN_WIDTH - artistW) / 2;
-    display.setCursor(artistX, 12);
-    if (artist.length() > 21)
-      display.print(artist.substring(0, 21));
-    else
-      display.print(artist);
+    if (song.length() > 21) {
+      songScrollOffset = (songScrollOffset + 1) % ((song.length() * 6) - SCREEN_WIDTH + 6);
+    } else {
+      songScrollOffset = 0;
+    }
+
+    if (artist.length() > 21) {
+      artistScrollOffset = (artistScrollOffset + 1) % ((artist.length() * 6) - SCREEN_WIDTH + 6);
+    } else {
+      artistScrollOffset = 0;
+    }
   }
 
-  // Reuse the old seek bar as a volume bar, centered on the value text
-  int volumeBarWidth = map(volume, 0, 100, 0, 90); // Adjusted to avoid overlap with BT
-  display.fillRect(18, 28, volumeBarWidth, 2, SSD1306_WHITE); // Centered line with BT text
+ 
+  int songW = song.length() * 6;                  // approximate pixel width
+  int songX = (SCREEN_WIDTH - min(SCREEN_WIDTH, songW)) / 2;
+  display.fillRect(0, 2, SCREEN_WIDTH, 12, SSD1306_BLACK); // Clear a bit taller area
+  
+  for (int i = 0; i < song.length(); i++) {
+    int charX = songX + (i * 6) - songScrollOffset;
+    
+    
+    if ((charX + 7) <= 0) {
+      continue;
+    }
 
-  // Smaller text for volume percentage (no "V:" and "%")
+    if (charX >= SCREEN_WIDTH) {
+      break;
+    }
+
+    // Draw the character (normal)
+    display.setCursor(charX, 2);
+    display.write(song[i]);
+    // Draw the same char with a +1 X offset for a "bold" effect
+    display.setCursor(charX + 1, 2);
+    display.write(song[i]);
+  }
+
+  // Scroll the artist name (only if we split the string)
+  if (sep != -1) {
+    int artistW = artist.length() * 6;
+    int artistX = (SCREEN_WIDTH - min(SCREEN_WIDTH, artistW)) / 2;
+    display.fillRect(0, 14, SCREEN_WIDTH, 12, SSD1306_BLACK); // Clear a bit taller area
+
+    for (int i = 0; i < artist.length(); i++) {
+      int charX = artistX + (i * 6) - artistScrollOffset;
+
+      // Skip if fully off to the left
+      if ((charX + 6) <= 0) {
+        continue;
+      }
+      // Break if off to the right
+      if (charX >= SCREEN_WIDTH) {
+        break;
+      }
+
+      display.setCursor(charX, 14);
+      display.write(artist[i]);
+    }
+  }
+
+  // Reset the display buffer after rendering to prevent stray artifacts
+  // You can keep this or remove if unneeded. 
+  for (int i = 0; i < 128; i++) {
+    display.drawLine(i, SCREEN_HEIGHT, i, SCREEN_HEIGHT, SSD1306_BLACK);
+  }
+
+  // Draw volume bar
+  int volumeBarWidth = map(volume, 0, 100, 0, 90);
+  display.fillRect(18, 28, volumeBarWidth, 2, SSD1306_WHITE);
+
+  // Add a small tick every 5 volume
+  for (int v = 0; v <= 100; v += 5) {
+    int tickPosition = map(v, 0, 100, 18, 18 + 90);
+    display.drawLine(tickPosition, 28, tickPosition, 29, SSD1306_WHITE);
+  }
+
+  // Display volume percentage
   display.setCursor(0, 24);
   display.print(volume);
 
-  // Play/pause indicator above volume bar
+  // Play/pause indicator
   int playPauseX = (SCREEN_WIDTH - 6) / 2;
   int playPauseY = 21;
-  if (isPlaying)
+  if (isPlaying) {
+    display.drawBitmap(playPauseX, playPauseY, playIconLeft, 6, 6, SSD1306_WHITE);
+  } else {
     display.setCursor(playPauseX, playPauseY);
-  else {
-     display.drawBitmap(playPauseX, playPauseY, playIconLeft, 6, 6, SSD1306_WHITE);
-    
     boldText("=");
   }
 
-  // Smaller BT indicator moved up by 1 pixel
-  display.setCursor(SCREEN_WIDTH - 18, 24); // Moved to avoid overlap
+  // Bluetooth indicator
+  display.setCursor(SCREEN_WIDTH - 12, 24);
   display.print("BT");
 
+  // Finally, update the display
   display.display();
 }
-
 
 
 void controlLED(unsigned long currentTime) {

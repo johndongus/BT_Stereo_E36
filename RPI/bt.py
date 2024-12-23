@@ -149,6 +149,64 @@ class BluetoothManager:
         except Exception as e:
             logging.error(f"Error listing managed objects: {e}")
 
+
+
+    def poll_call_info(self):
+        logging.debug("poll_call_info: Starting call info polling.")
+        try:
+            bus = dbus.SystemBus()
+            ofono_manager = dbus.Interface(bus.get_object('org.ofono', '/'), 'org.ofono.Manager')
+            modems = ofono_manager.GetModems()
+
+            if not modems:
+                logging.warning("poll_call_info: No modems detected.")
+                return True
+
+            for modem_path, properties in modems:
+                self.connected_device_name = properties.get('Name', 'Unknown Device')  # Store the device name
+                device_name = properties.get('Name', 'Unknown Device')
+                logging.debug(f"poll_call_info: Processing modem: {modem_path}, Device Name: {device_name}")
+
+                if 'org.ofono.VoiceCallManager' in properties.get('Interfaces', []):
+                    logging.debug(f"poll_call_info: Found VoiceCallManager for modem {modem_path}")
+                    voice_call_manager = dbus.Interface(
+                        bus.get_object('org.ofono', modem_path),
+                        'org.ofono.VoiceCallManager'
+                    )
+
+                    try:
+                        calls = voice_call_manager.GetCalls()
+                        logging.debug(f"poll_call_info: Calls retrieved: {calls}")
+                    except dbus.exceptions.DBusException as e:
+                        logging.error(f"poll_call_info: Error retrieving calls: {e}")
+                        continue
+
+                    if not calls:
+                        logging.info("poll_call_info: No active calls.")
+                        return True
+
+                    for call_path, call_props in calls:
+                        state = call_props.get('State', 'unknown')
+                        number = call_props.get('LineIdentification', 'Unknown Number')
+                        contact_name = call_props.get('Name', '').strip() or device_name
+                        for key, value in call_props.items():
+                            logging.debug(f"poll_call_info: {key} = {value}")
+                        logging.debug(f"poll_call_info: Call state: {state}, Number: {number}, Name: {contact_name}")
+
+                        if state in ['incoming', 'active']:
+                            call_info = f"{contact_name} ({device_name}) - {number}"
+                            self.send_to_serial("SONG:" + call_info)
+                            logging.info(f"poll_call_info: Call info sent: {call_info}")
+        except dbus.exceptions.DBusException as e:
+            logging.error(f"poll_call_info: Error polling call info: {e}")
+        logging.debug("poll_call_info: Completed call info polling.")
+        return True
+
+
+
+
+
+
     def poll_media_info(self):
         try:
             bus = dbus.SystemBus()
@@ -210,7 +268,13 @@ class BluetoothManager:
                 return
 
             logging.debug(f"Properties changed: {interface}, {changed}, {invalidated}, {path}")
-
+            if interface == "org.bluez.Device1" and "CallMetadata" in changed:
+                call_metadata = changed["CallMetadata"]
+                contact_name = call_metadata.get("Name", "Unknown Contact")
+                phone_number = call_metadata.get("Number", "Unknown Number")
+                call_info = f"{contact_name} - {phone_number}"
+                self.send_to_serial("SONG:" + call_info)
+                logging.info(f"Call info updated from signal: {call_info}")
             if interface == "org.bluez.MediaPlayer1":
                 track = changed.get("Track", {})
                 if track:
@@ -240,6 +304,8 @@ class BluetoothManager:
                     position = changed['Position']
                     logging.debug(f"Position updated: {position} microseconds")
                     self.send_seek_percentage(position)
+                
+
 
                 # Set media_player_path if not already set
                 if not self.media_player_path:
@@ -261,7 +327,12 @@ class BluetoothManager:
             path_keyword="path",
         )
         logging.info("Started monitoring Bluetooth properties.")
-
+    def send_device_name(self):
+        if self.connected_device_name:
+            self.send_to_serial("DEVICE_NAME:" + self.connected_device_name)
+            logging.info(f"Sent device name: {self.connected_device_name}")
+        else:
+            logging.warning("No connected device name to send.")
     def control_playback(self, command):
         if not self.media_player_path:
             logging.error("No media player available.")
@@ -294,6 +365,8 @@ class BluetoothManager:
             elif command == "rw":
                 media_player.Rewind()
                 logging.info("Executed rewind command.")
+            elif data == "DEVICE_NAME":
+                self.send_device_name()
             else:
                 logging.error(f"Unknown command: {command}")
         except dbus.exceptions.DBusException as e:
@@ -365,7 +438,7 @@ class BluetoothManager:
             logging.warning("Duration not set. Cannot calculate seek percentage.")
 
     def set_volume(self, level):
-
+ 
         if 0 <= level <= 100:
             scaled_volume = level * 2  # Maps 0-100 to 0-100
             scaled_volume_str = f"{scaled_volume}"  # Format as percentage string
@@ -467,7 +540,9 @@ class BluetoothManager:
             loop = GLib.MainLoop()
 
             # Poll media info every 10 seconds
-            GLib.timeout_add_seconds(10, self.poll_media_info)
+            GLib.timeout_add_seconds(2, self.poll_media_info)
+
+            GLib.timeout_add_seconds(5, self.poll_call_info)  # Poll for call information every 10 seconds
 
             # Optionally, start a seek monitor
             # self.start_seek_monitor()
