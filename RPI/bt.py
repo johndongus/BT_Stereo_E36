@@ -77,8 +77,11 @@ class BluetoothManager:
         self.current_song = "Unknown Artist - Unknown Title"
         self.current_pos = 0
         self.duration = None  # Duration in microseconds
-        self.command_cooldown = False  # To prevent rapid command processing
-        self.reset_delay = reset_delay  # Delay before attempting to reset/reconnect
+        self.command_cooldown = False
+        self.reset_delay = reset_delay
+
+        # Store the path of the last known incoming call so we can accept/reject it
+        self.last_incoming_call_path = None
 
     def add_to_past_devices(self, device):
         if device not in self.past_devices:
@@ -121,8 +124,8 @@ class BluetoothManager:
         try:
             self.serial_conn = serial.Serial(self.serial_port, self.baudrate, timeout=1)
             logging.info(f"Connected to serial port {self.serial_port} at {self.baudrate} baud.")
-            #self.send_to_serial("RESET")  # Send RESET command upon successful connection
-            logging.info("Sent RESET command to Arduino.")
+            # Example command, if desired:
+            # self.send_to_serial("RESET")
             return True
         except serial.SerialException as e:
             logging.error(f"Failed to connect to serial port {self.serial_port}: {e}")
@@ -149,9 +152,52 @@ class BluetoothManager:
         except Exception as e:
             logging.error(f"Error listing managed objects: {e}")
 
+    # -------------------------------------------------------------
+    #  ACCEPT / REJECT CALL Methods
+    # -------------------------------------------------------------
+    def accept_call(self):
+        """
+        Accept the most recent incoming call (if any).
+        """
+        if not self.last_incoming_call_path:
+            logging.warning("No incoming call to accept.")
+            return
 
+        try:
+            bus = dbus.SystemBus()
+            call_obj = bus.get_object('org.ofono', self.last_incoming_call_path)
+            call_iface = dbus.Interface(call_obj, 'org.ofono.VoiceCall')
+            call_iface.Answer()
+            logging.info(f"Call accepted for path: {self.last_incoming_call_path}")
+        except dbus.exceptions.DBusException as e:
+            logging.error(f"Error accepting call: {e}")
 
+    def reject_call(self):
+        """
+        Reject (hangup) the most recent incoming call (if any).
+        """
+        if not self.last_incoming_call_path:
+            logging.warning("No incoming call to reject.")
+            return
+
+        try:
+            bus = dbus.SystemBus()
+            call_obj = bus.get_object('org.ofono', self.last_incoming_call_path)
+            call_iface = dbus.Interface(call_obj, 'org.ofono.VoiceCall')
+            call_iface.Hangup()
+            logging.info(f"Call rejected for path: {self.last_incoming_call_path}")
+        except dbus.exceptions.DBusException as e:
+            logging.error(f"Error rejecting call: {e}")
+
+    # -------------------------------------------------------------
+    #  Poll for Call Info
+    # -------------------------------------------------------------
     def poll_call_info(self):
+        """
+        Check for active or incoming calls using ofono.
+        If an incoming call is detected, store its path in self.last_incoming_call_path
+        and send caller info to the Arduino.
+        """
         logging.debug("poll_call_info: Starting call info polling.")
         try:
             bus = dbus.SystemBus()
@@ -160,12 +206,15 @@ class BluetoothManager:
 
             if not modems:
                 logging.warning("poll_call_info: No modems detected.")
-                return True
+                return True  # Keep the timer active
+
+            # We reset the last_incoming_call_path each time, in case the call ended
+            self.last_incoming_call_path = None
 
             for modem_path, properties in modems:
-                self.connected_device_name = properties.get('Name', 'Unknown Device')  # Store the device name
+                self.connected_device_name = properties.get('Name', 'Unknown Device')
                 device_name = properties.get('Name', 'Unknown Device')
-                logging.debug(f"poll_call_info: Processing modem: {modem_path}, Device Name: {device_name}")
+                logging.debug(f"poll_call_info: Modem: {modem_path}, Device Name: {device_name}")
 
                 if 'org.ofono.VoiceCallManager' in properties.get('Interfaces', []):
                     logging.debug(f"poll_call_info: Found VoiceCallManager for modem {modem_path}")
@@ -189,24 +238,32 @@ class BluetoothManager:
                         state = call_props.get('State', 'unknown')
                         number = call_props.get('LineIdentification', 'Unknown Number')
                         contact_name = call_props.get('Name', '').strip() or device_name
-                        for key, value in call_props.items():
-                            logging.debug(f"poll_call_info: {key} = {value}")
-                        logging.debug(f"poll_call_info: Call state: {state}, Number: {number}, Name: {contact_name}")
 
-                        if state in ['incoming', 'active']:
-                            call_info = f"{contact_name} ({device_name}) - {number}"
+                        logging.debug(
+                            f"poll_call_info: Call path={call_path}, State={state}, "
+                            f"Number={number}, Name={contact_name}"
+                        )
+
+                        # If there's an 'incoming' call, store the path for accept/reject
+                        if state == 'incoming':
+                            self.last_incoming_call_path = call_path
+                            call_info = f"[INCOMING] {contact_name} - {number}"
                             self.send_to_serial("SONG:" + call_info)
-                            logging.info(f"poll_call_info: Call info sent: {call_info}")
+                            logging.info(f"Incoming call info sent: {call_info}")
+                        elif state == 'active':
+                            # Optionally update display for an active call
+                            call_info = f"[ACTIVE] {contact_name} - {number}"
+                            self.send_to_serial("SONG:" + call_info)
+                            logging.info(f"Active call info sent: {call_info}")
+
         except dbus.exceptions.DBusException as e:
             logging.error(f"poll_call_info: Error polling call info: {e}")
         logging.debug("poll_call_info: Completed call info polling.")
-        return True
+        return True  # Keep the timeout active
 
-
-
-
-
-
+    # -------------------------------------------------------------
+    #  Poll for Media Info ...
+    # -------------------------------------------------------------
     def poll_media_info(self):
         try:
             bus = dbus.SystemBus()
@@ -216,7 +273,6 @@ class BluetoothManager:
                 if 'org.bluez.MediaPlayer1' in interfaces:
                     props = interfaces['org.bluez.MediaPlayer1']
                     track = props.get('Track', {})
-                    logging.debug(f"Track properties: {track}")  # Comprehensive logging
                     artist = track.get('Artist', ["Unknown Artist"])
                     title = track.get('Title', "Unknown Title")
                     cs = f"{artist} - {title}"
@@ -233,17 +289,12 @@ class BluetoothManager:
                         self.send_to_serial("STATE:" + st)
                         logging.info(f"Updated state: {st}")
 
-                    # Retrieve Duration from Track.Duration if available
                     if 'Duration' in track:
-                        self.duration = track['Duration']  # Duration in microseconds
+                        self.duration = track['Duration']  # microseconds
                         logging.info(f"Track duration set to: {self.duration} microseconds")
-                        # Optionally, send duration to Arduino if needed
-                        # self.send_to_serial("DUR:" + str(int(self.duration)))
                     else:
-                        logging.warning("Track Duration not available. Cannot calculate seek percentage.")
                         self.duration = None
 
-                    # Set media_player_path if not already set
                     if not self.media_player_path:
                         self.media_player_path = path
                         logging.info(f"Media player path set to: {self.media_player_path}")
@@ -259,7 +310,7 @@ class BluetoothManager:
         except Exception as e:
             logging.error(f"Error polling media info: {e}")
             self.schedule_reset()
-        return True  # Keep the timeout active
+        return True
 
     def start_media_monitor(self):
         def on_properties_changed(interface, changed, invalidated, path):
@@ -268,13 +319,8 @@ class BluetoothManager:
                 return
 
             logging.debug(f"Properties changed: {interface}, {changed}, {invalidated}, {path}")
-            if interface == "org.bluez.Device1" and "CallMetadata" in changed:
-                call_metadata = changed["CallMetadata"]
-                contact_name = call_metadata.get("Name", "Unknown Contact")
-                phone_number = call_metadata.get("Number", "Unknown Number")
-                call_info = f"{contact_name} - {phone_number}"
-                self.send_to_serial("SONG:" + call_info)
-                logging.info(f"Call info updated from signal: {call_info}")
+            bus = dbus.SystemBus()
+
             if interface == "org.bluez.MediaPlayer1":
                 track = changed.get("Track", {})
                 if track:
@@ -294,20 +340,14 @@ class BluetoothManager:
                     self.send_to_serial("STATE:" + st)
                     logging.info(f"Updated state from signal: {st}")
 
-                # Retrieve Duration from Track.Duration if available
                 if 'Duration' in track and self.duration is None:
-                    self.duration = track['Duration']  # Duration in microseconds
+                    self.duration = track['Duration']
                     logging.info(f"Track duration set to: {self.duration} microseconds")
-                    # Optionally, send duration to Arduino if needed
-                    # self.send_to_serial("DUR:" + str(int(self.duration)))
                 elif 'Position' in changed and self.duration:
                     position = changed['Position']
                     logging.debug(f"Position updated: {position} microseconds")
                     self.send_seek_percentage(position)
-                
 
-
-                # Set media_player_path if not already set
                 if not self.media_player_path:
                     self.media_player_path = path
                     logging.info(f"Media player path set to: {self.media_player_path}")
@@ -327,12 +367,14 @@ class BluetoothManager:
             path_keyword="path",
         )
         logging.info("Started monitoring Bluetooth properties.")
+
     def send_device_name(self):
         if self.connected_device_name:
             self.send_to_serial("DEVICE_NAME:" + self.connected_device_name)
             logging.info(f"Sent device name: {self.connected_device_name}")
         else:
             logging.warning("No connected device name to send.")
+
     def control_playback(self, command):
         if not self.media_player_path:
             logging.error("No media player available.")
@@ -349,23 +391,18 @@ class BluetoothManager:
             elif command == "pause":
                 media_player.Pause()
                 logging.info("Executed pause command.")
-                # Add a slight delay to prevent fighting the screen
                 if not self.command_cooldown:
                     self.command_cooldown = True
                     GLib.timeout_add(200, self.reset_command_cooldown)
-            elif command == "next":
+            elif command == "ff":
                 media_player.Next()
                 logging.info("Executed next command.")
-            elif command == "previous":
+            elif command == "rw":
                 media_player.Previous()
                 logging.info("Executed previous command.")
-            elif command == "ff":
-                media_player.FastForward()
-                logging.info("Executed fast-forward command.")
-            elif command == "rw":
-                media_player.Rewind()
+
                 logging.info("Executed rewind command.")
-            elif data == "DEVICE_NAME":
+            elif command == "DEVICE_NAME":
                 self.send_device_name()
             else:
                 logging.error(f"Unknown command: {command}")
@@ -377,9 +414,13 @@ class BluetoothManager:
         self.command_cooldown = False
         return False  # Remove the timeout
 
+    # -------------------------------------------------------------
+    #  Handle Serial Input
+    # -------------------------------------------------------------
     def handle_serial_input(self, data):
         data = data.strip()
         logging.debug(f"Handling serial input: {data}")
+
         if data == "PLAY":
             self.control_playback("play")
         elif data == "PAUSE":
@@ -394,6 +435,10 @@ class BluetoothManager:
             self.control_playback("rw")
         elif data == "RESTART_SERVICE":
             os.system("systemctl restart bt-pulseaudio.service")
+        elif data == "ACCEPT_CALL":
+            self.accept_call()      # <---------------- Accept call
+        elif data == "REJECT_CALL":
+            self.reject_call()      # <---------------- Reject call
         elif data.startswith("VOL+") or data.startswith("VOL-"):
             try:
                 volume_level = int(data[4:])
@@ -425,35 +470,24 @@ class BluetoothManager:
         return True  # Keep the callback active
 
     def send_seek_percentage(self, position):
-        """
-        Calculate and send the seek percentage as POS:<int>.
-        """
         if self.duration and self.duration > 0:
             seek_percentage = int((position / self.duration) * 100)
-            seek_percentage = max(0, min(seek_percentage, 100))  # Clamp between 0 and 100
-            seek_percentage_str = f"{seek_percentage}"
-            self.send_to_serial("POS:" + seek_percentage_str)
-            logging.info(f"Seek percentage: {seek_percentage_str}%")
+            seek_percentage = max(0, min(seek_percentage, 100))
+            self.send_to_serial("POS:" + str(seek_percentage))
+            logging.info(f"Seek percentage: {seek_percentage}%")
         else:
             logging.warning("Duration not set. Cannot calculate seek percentage.")
 
     def set_volume(self, level):
- 
         if 0 <= level <= 100:
-            scaled_volume = level * 2  # Maps 0-100 to 0-100
-            scaled_volume_str = f"{scaled_volume}"  # Format as percentage string
+            scaled_volume = level * 2
+            scaled_volume_str = f"{scaled_volume}"
 
             try:
-                # Use amixer to set the volume
-                #run(["amixer", "set", "PCM", scaled_volume_str], check=True, stdout=PIPE)
-                #pamixer
-                #run(["pamixer", "--set-volume", scaled_volume_str], check=True, stdout=PIPE)
-                #pactl set-sink-volume @DEFAULT_SINK@ 150%
-                run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", scaled_volume_str + "%"], check=True, stdout=PIPE)
-                # Send the original volume level to the serial device
+                run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", scaled_volume_str + "%"],
+                    check=True, stdout=PIPE)
                 self.send_to_serial("VOL:" + str(level))
-                # Log the volume change
-                logging.info(f"Volume set to {level}% (pamixer volume: {scaled_volume_str})")
+                logging.info(f"Volume set to {level}% (pactl volume: {scaled_volume_str}%)")
             except CalledProcessError as e:
                 logging.error(f"Failed to set volume: {e}")
                 self.schedule_reset()
@@ -461,9 +495,6 @@ class BluetoothManager:
             logging.error("Volume level out of range (0-100).")
 
     def handle_serial_disconnect(self):
-        """
-        Handle serial disconnection by closing the connection and scheduling a program reset.
-        """
         if self.serial_conn and self.serial_conn.is_open:
             try:
                 self.serial_conn.close()
@@ -477,35 +508,24 @@ class BluetoothManager:
         self.schedule_reset()
 
     def schedule_reset(self):
-        """
-        Schedule a program reset after a short delay to allow logs to flush.
-        """
         logging.info(f"Scheduling program reset in {self.reset_delay} seconds...")
         GLib.timeout_add_seconds(self.reset_delay, self.reset_program)
 
     def reset_program(self):
-        """
-        Reset the Python program by re-executing the script.
-        """
         logging.info("Resetting the program...")
         try:
-            # Flush all logs before resetting
             for handler in logging.root.handlers[:]:
                 handler.flush()
         except Exception as e:
             logging.error(f"Error flushing logs: {e}")
 
-        # Restart the script
         try:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception as e:
             logging.critical(f"Failed to reset the program: {e}")
-            sys.exit(1)  # Exit if unable to reset
+            sys.exit(1)
 
     def start_seek_monitor(self):
-        """
-        Optionally, implement a periodic check for the current position to send seek percentage.
-        """
         def callback():
             if self.media_player_path and self.duration:
                 try:
@@ -517,9 +537,8 @@ class BluetoothManager:
                 except dbus.exceptions.DBusException as e:
                     logging.error(f"Error retrieving position for seek percentage: {e}")
                     self.schedule_reset()
-            return True  # Continue calling
+            return True
 
-        # Poll every 1 second
         GLib.timeout_add_seconds(1, callback)
 
     def start(self):
@@ -528,24 +547,20 @@ class BluetoothManager:
             if not self.setup_serial():
                 logging.error("Serial setup failed. Retrying in 5 seconds...")
                 time.sleep(self.reset_delay)
-                continue  # Retry setup_serial
+                continue
 
             if self.connected_device:
                 self.trust_device(self.connected_device)
-            self.start_media_monitor()
 
-            # List all managed objects for debugging
+            self.start_media_monitor()
             self.list_managed_objects()
 
             loop = GLib.MainLoop()
 
-            # Poll media info every 10 seconds
+            # Poll media info every 2 seconds
             GLib.timeout_add_seconds(2, self.poll_media_info)
-
-            GLib.timeout_add_seconds(5, self.poll_call_info)  # Poll for call information every 10 seconds
-
-            # Optionally, start a seek monitor
-            # self.start_seek_monitor()
+            # Poll call info every 5 seconds
+            GLib.timeout_add_seconds(5, self.poll_call_info)
 
             # Add an IO watch for serial data
             try:
@@ -565,7 +580,8 @@ class BluetoothManager:
 
 
 if __name__ == "__main__":
-    #// run pulseaudio --start
+    # Ensure pulseaudio is started
     os.system("pulseaudio --start")
+
     bt_manager = BluetoothManager()
     bt_manager.start()
