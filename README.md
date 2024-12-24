@@ -32,12 +32,13 @@
 
 ## 🛠️ TODO Features
 
-
+- **BT Interface**  
+  - Accept / Reject pairing request
+  - Paired device list with ability to remove device from list
   
 - **Microphone Input**  
   Enable voice input and hands-free calling.
 
-  
 - **Equalizer Settings**  
   Expand on existing menu for custom audio adjustments. Including finding a novel way to do equalization with pulseaudio, purely through command line. 
   Note on this, `pactl load-module module-ladspa-sink sink_name=ladspa_out sink_master=@DEFAULT_SINK@ plugin=caps label=Eq10 control=0,0,0,0,0,0,0,0,0,0`
