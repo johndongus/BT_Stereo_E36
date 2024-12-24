@@ -20,29 +20,43 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT,
 #define SW 2
 #define LED_PIN 7
 
+// Encoder and button states
 int lastStateCLK, currentStateCLK, lastStateDT, currentStateDT, lastButtonState;
-unsigned long buttonPressStartTime=0, lastButtonPressTime=0, lastSongUpdateTime=0, lastRapidClickTime=0;
-bool longPressHandled=false, isPlaying=true, isBTConnected=true, inMenu=false, displayOn=true;
-const unsigned long doubleClickThreshold=300, longPressThreshold=2000, rapidClickInterval=500;
 
-// Call-incoming flag
-bool callIncoming = false;
+// Timing variables
+unsigned long buttonPressStartTime = 0;
+unsigned long lastButtonPressTime  = 0;
+unsigned long lastSongUpdateTime   = 0;
+unsigned long lastRapidClickTime   = 0;
 
-String songName="";
-int songPixelLength=0, currentPosition=0, volume=50;
-int menuIndex=0, subMenuIndex=0, brightnessLevel=50, contrastLevel=50;
-int encoderAccum=0, rapidClickCount=0;
-String deviceName = "NONE";
+// Flags and states
+bool longPressHandled    = false;
+bool isPlaying           = true;
+bool isBTConnected       = true;
+bool inMenu              = false;
+bool displayOn           = true;
+bool callIncoming        = false;
 
-// When we do FF or RW, we show a short “animation” 
+// Menu and system variables
+String songName = "";
+int songPixelLength = 0;
+int currentPosition  = 0;
+int volume           = 50;
+int menuIndex        = 0;
+int subMenuIndex     = 0;
+int brightnessLevel  = 50;
+int contrastLevel    = 50;
+int encoderAccum     = 0;
+int rapidClickCount  = 0;
+String deviceName    = "NONE";
+
+// Animation flags and timing
 bool fastForwardAnimationActive = false;
 bool rewindAnimationActive      = false;
 unsigned long animationStartTime=0;
-const unsigned long animationDuration = 500; // ms to display >> or <<
+const unsigned long animationDuration = 500; // Duration to display FF/RW animation in ms
 
-// --------------------------------------------------
-// CALL_MENU state
-// --------------------------------------------------
+// Menu state enumeration
 enum MenuState {
   MAIN_MENU,
   TUNER_MENU,
@@ -55,6 +69,7 @@ enum MenuState {
 };
 MenuState currentMenuState = MAIN_MENU;
 
+// Menu items
 const char* mainMenuItems[]    = { "Tuner", "Display", "System" };
 const int   mainMenuCount      = 3;
 const char* tunerItems[]       = { "Bass", "Treble", "Loudness" };
@@ -65,6 +80,93 @@ const char* systemItems[]      = { "Restart Service", "Device Name" };
 const int   systemCount        = 2;
 const char* callMenuItems[]    = { "Accept", "Reject" };
 const int   callMenuCount      = 2;
+
+// Variables for delayed single-click handling
+bool singleClickPending = false;
+unsigned long singleClickTime = 0;
+
+// Constants for thresholds
+const unsigned long doubleClickThreshold = 300;   // Time window for double-click in ms
+const unsigned long longPressThreshold   = 2000;  // Time to detect long press in ms
+const unsigned long rapidClickInterval   = 500;    // Time window for rapid clicks in ms
+
+// Function declarations
+void applyDisplaySettings();
+void calculateSongPixelLength();
+void bootupAnimation();
+void boldText(String text);
+void softwareReset();
+void handleSerialInput(String input);
+void navigateMenu(int d);
+void handleMenuClick();
+void handleDoubleClick();
+void drawMenu(const char* items[], int count, int selected);
+void drawValueMenu(String title, int value);
+void drawValueMenu_S(String title, String textValue);
+void displayMenu();
+void displayUI();
+void controlLED(unsigned long currentTime);
+void toggleDisplay();
+void handleInputs(unsigned long currentTime);
+
+void setup() {
+  delay(100);
+  Serial.begin(9600);
+
+  // Initialize encoder and button pins
+  pinMode(CLK, INPUT);
+  pinMode(DT, INPUT);
+  pinMode(SW, INPUT_PULLUP);
+
+  lastStateCLK    = digitalRead(CLK);
+  lastStateDT     = digitalRead(DT);
+  lastButtonState = digitalRead(SW);
+
+  // Initialize LED
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);
+
+  // Initialize display
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)){
+    Serial.println("SSD1306 allocation failed");
+    while(true);
+  }
+  calculateSongPixelLength();
+  bootupAnimation();
+  applyDisplaySettings();
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  handleInputs(currentTime);
+
+  // Read any serial commands
+  if(Serial.available()){
+    String incoming = Serial.readStringUntil('\n');
+    handleSerialInput(incoming);
+  }
+
+  // Handle pending single click (for delayed processing)
+  if (singleClickPending && (currentTime - singleClickTime > doubleClickThreshold)) {
+    // Single click has been confirmed
+    singleClickPending = false;
+    // Process single click based on current menu state
+    if (inMenu && currentMenuState == MAIN_MENU) {
+      handleMenuClick();
+    }
+    // Add other single-click actions here if needed
+  }
+
+  // Draw UI
+  displayUI();
+
+  // Blink LED if SW is held
+  controlLED(currentTime);
+}
+
+//////////////////////////////////////////////
+// Function Implementations
+//////////////////////////////////////////////
 
 void applyDisplaySettings() {
   uint8_t contrastValue = map(brightnessLevel, 0, 100, 0, 255);
@@ -95,11 +197,13 @@ void bootupAnimation() {
 }
 
 void boldText(String text) {
-  int x=display.getCursorX();
-  int y=display.getCursorY();
-  display.setCursor(x,y);   display.print(text);
-  display.setCursor(x+1,y); display.print(text);
-  display.setCursor(x,y);
+  int x = display.getCursorX();
+  int y = display.getCursorY();
+  display.setCursor(x, y);   
+  display.print(text);
+  display.setCursor(x+1, y); 
+  display.print(text);
+  display.setCursor(x, y);
 }
 
 void softwareReset() {
@@ -127,10 +231,10 @@ void handleSerialInput(String input) {
     volume = input.substring(4).toInt();
   }
   else if(input.startsWith("STATE:")) {
-    isPlaying = (input.substring(6)=="PLAY");
+    isPlaying = (input.substring(6) == "PLAY");
   }
   else if(input.startsWith("BT:")) {
-    isBTConnected = (input.substring(3)=="ON");
+    isBTConnected = (input.substring(3) == "ON");
   }
   else if(input.equalsIgnoreCase("RESET")){
     Serial.println("System is resetting...");
@@ -145,7 +249,7 @@ void navigateMenu(int d) {
   if(!inMenu) return;
 
   if (currentMenuState == CALL_MENU) {
-    // Move subMenuIndex up/down
+    // Move subMenuIndex up/down within CALL_MENU
     subMenuIndex += d;
     if(subMenuIndex < 0) subMenuIndex = callMenuCount - 1;
     if(subMenuIndex >= callMenuCount) subMenuIndex = 0;
@@ -189,19 +293,20 @@ void handleMenuClick() {
 
   if(currentMenuState == CALL_MENU) {
     if(subMenuIndex == 0) {
-      // Accept
+      // Accept call
       Serial.println("ACCEPT_CALL");
     } else {
-      // Reject
+      // Reject call
       Serial.println("REJECT_CALL");
     }
+    // After action, exit menu
     callIncoming      = false;
     inMenu            = false;
     currentMenuState  = MAIN_MENU;
     return;
   }
 
-  // Normal menus
+  // Handle MAIN_MENU selections
   if(currentMenuState == MAIN_MENU) {
     if(menuIndex == 0) {
       currentMenuState = TUNER_MENU;
@@ -214,6 +319,11 @@ void handleMenuClick() {
       subMenuIndex = 0;
     }
   }
+  // Handle other submenus if needed
+  else if(currentMenuState == TUNER_MENU) {
+    // Example: Handle tuner submenu selections
+    // Add your specific actions here
+  }
   else if(currentMenuState == DISPLAY_MENU) {
     if(subMenuIndex == 0) {
       currentMenuState = DISPLAY_BRIGHTNESS;
@@ -224,6 +334,7 @@ void handleMenuClick() {
       Serial.println("RESTART_SERVICE");
     } else if(subMenuIndex == 1) {
       currentMenuState = DEVICE_NAME_MENU;
+      subMenuIndex = 0;
     }
   }
 }
@@ -232,7 +343,7 @@ void handleMenuClick() {
 // handleDoubleClick
 // --------------------------------------------------
 void handleDoubleClick() {
-  // If there's an incoming call, open CALL_MENU
+  // If there's an incoming call and not already in a menu, open CALL_MENU
   if(callIncoming && !inMenu) {
     inMenu = true;
     currentMenuState = CALL_MENU;
@@ -240,6 +351,7 @@ void handleDoubleClick() {
     return;
   }
 
+  // Toggle main menu on double-click
   if(!inMenu){
     inMenu = true;
     currentMenuState = MAIN_MENU;
@@ -265,7 +377,7 @@ void drawMenu(const char* items[], int count, int selected) {
   display.setTextColor(SSD1306_WHITE);
   for(int i=0; i<count; i++){
     display.setCursor(0, i*10);
-    if(i==selected){
+    if(i == selected){
       display.fillRect(0, i*10, 128, 10, SSD1306_WHITE);
       display.setTextColor(SSD1306_BLACK);
     } else {
@@ -276,7 +388,7 @@ void drawMenu(const char* items[], int count, int selected) {
   display.display();
 }
 
-void drawValueMenu(String title,int value) {
+void drawValueMenu(String title, int value) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -291,12 +403,15 @@ void drawValueMenu_S(String title, String textValue) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor((128 - (title.length()*6)) / 2, 0);
+  
+  // Center the title
+  display.setCursor((128 - (title.length() * 6)) / 2, 0);
   display.print(title);
-
-  display.setCursor((128 - (textValue.length()*6)) / 2, 12);
+  
+  // Center the textValue
+  display.setCursor((128 - (textValue.length() * 6)) / 2, 12);
   display.print(textValue);
-
+  
   display.display();
 }
 
@@ -407,9 +522,8 @@ void displayUI() {
     song   = songName;
   }
 
-  unsigned long currentTime = millis();
-  if (currentTime - lastScrollUpdate > scrollInterval) {
-    lastScrollUpdate = currentTime;
+  if (millis() - lastScrollUpdate > scrollInterval) {
+    lastScrollUpdate = millis();
     if (song.length() > 21) {
       songScrollOffset = (songScrollOffset + 1) 
                          % ((song.length() * 6) - SCREEN_WIDTH + 6);
@@ -502,27 +616,30 @@ void displayUI() {
 // controlLED
 // --------------------------------------------------
 void controlLED(unsigned long currentTime) {
-  static bool isFlashing=false;
-  static bool ledOn=true;
-  static unsigned long lastToggle=0;
+  static bool isFlashing = false;
+  static bool ledOn      = true;
+  static unsigned long lastToggle = 0;
+
   int buttonState = digitalRead(SW);
-  if(buttonState==LOW){
+  if(buttonState == LOW){
     if(!isFlashing){
-      isFlashing=true;
-      ledOn=false;
-      digitalWrite(LED_PIN,LOW);
-      lastToggle=currentTime;
-    } else {
+      isFlashing = true;
+      ledOn      = false;
+      digitalWrite(LED_PIN, LOW);
+      lastToggle = currentTime;
+    } 
+    else {
       if(currentTime - lastToggle >= 500){
         ledOn = !ledOn;
-        digitalWrite(LED_PIN, ledOn?HIGH:LOW);
-        lastToggle=currentTime;
+        digitalWrite(LED_PIN, ledOn ? HIGH : LOW);
+        lastToggle = currentTime;
       }
     }
-  } else {
+  } 
+  else {
     if(isFlashing){
-      isFlashing=false;
-      digitalWrite(LED_PIN,HIGH);
+      isFlashing = false;
+      digitalWrite(LED_PIN, HIGH);
     }
   }
 }
@@ -541,68 +658,83 @@ void toggleDisplay() {
 // handleInputs
 // --------------------------------------------------
 void handleInputs(unsigned long currentTime) {
+  // Read the current states of CLK and DT
   currentStateCLK = digitalRead(CLK);
   currentStateDT  = digitalRead(DT);
-  bool clkChanged = (currentStateCLK != lastStateCLK);
+  bool clkChanged  = (currentStateCLK != lastStateCLK);
+  
+  // Read the current state of the button
   int currentButtonState = digitalRead(SW);
 
+  // Determine if the button is pressed or released
   bool buttonPressed  = (currentButtonState == LOW);
   bool buttonReleased = (lastButtonState == LOW && currentButtonState == HIGH);
+  
+  // Calculate how long the button has been held down
   unsigned long heldTime = (buttonPressed) ? (currentTime - buttonPressStartTime) : 0;
 
-  // We'll keep a static accumulator for FF/RW spins
-  // and a static boolean “inFFRWMode” to track if
-  // user is actively spinning for FF/RW (rather than
-  // going for a play/pause long-press).
+  // Static variables for FF/RW
   static int  ffRwAccum   = 0;
   static bool inFFRWMode  = false;
 
   // Handle encoder rotation
   if (clkChanged) {
     if (inMenu) {
-      // In a menu => normal menu navigation
-      if (currentStateDT != currentStateCLK) encoderAccum++;
-      else encoderAccum--;
+      // In a menu => navigate through menu items
+      if (currentStateDT != currentStateCLK) {
+        encoderAccum++;
+      }
+      else {
+        encoderAccum--;
+      }
+
       if (abs(encoderAccum) >= 2) {
         navigateMenu((encoderAccum > 0) ? 1 : -1);
         encoderAccum = 0;
       }
     } 
     else {
-      // Not in a menu => Either volume or FF/RW
+     
       if (buttonPressed) {
-        // If the knob is turned while pressed => FFRW
+        
         inFFRWMode = true;
-        if (currentStateDT != currentStateCLK) ffRwAccum++;
-        else ffRwAccum--;
 
-        // If we cross threshold, send once
-        if (abs(ffRwAccum) >= 2) {
+        if (currentStateDT != currentStateCLK) {
+          ffRwAccum++;
+        }
+        else {
+          ffRwAccum--;
+        }
+
+       
+        if (abs(ffRwAccum) >= 2) { /
           if (ffRwAccum > 0) {
             Serial.println("FF");
             // Start FF animation
             fastForwardAnimationActive = true;
             rewindAnimationActive      = false;
             animationStartTime         = currentTime;
-          } else {
+          }
+          else {
             Serial.println("RW");
             // Start RW animation
             rewindAnimationActive      = true;
             fastForwardAnimationActive = false;
             animationStartTime         = currentTime;
           }
-          ffRwAccum = 0;
+          ffRwAccum = 0; 
         }
       }
       else {
-        // Button not pressed => normal volume
+       
         ffRwAccum  = 0;
         inFFRWMode = false;
 
         if (currentStateDT != currentStateCLK) {
           volume = min(100, volume + 1);
           Serial.println("VOL+" + String(volume));
-        } else {
+        }
+        else {
           volume = max(0, volume - 1);
           Serial.println("VOL-" + String(volume));
         }
@@ -610,94 +742,70 @@ void handleInputs(unsigned long currentTime) {
     }
   }
 
-  // Handle button press/release times
+  // Handle button press/release events
   if (buttonPressed) {
+    // If the button was just pressed
     if (lastButtonState == HIGH) {
       buttonPressStartTime = currentTime;
       longPressHandled     = false;
-      inFFRWMode           = false;  // We haven't turned yet
-    } else {
-      // If we have been holding
+      // Reset FF/RW mode when starting a new press
+      inFFRWMode           = false;
+    }
+    else {
+      // If the button is being held down
       if (!longPressHandled && !inFFRWMode && (heldTime > longPressThreshold)) {
-        // Only do PLAY/PAUSE if we are NOT in FFRW mode
-        isPlaying = !isPlaying;
-        Serial.println(isPlaying ? "PLAY" : "PAUSE");
-        longPressHandled = true;
+        if (inMenu && currentMenuState != MAIN_MENU) {
+          // If in a submenu, exit back to main menu
+          inMenu = false;
+          currentMenuState = MAIN_MENU;
+          Serial.println("Exited to Main Menu via Long Press.");
+        }
+        else {
+          // If not in a submenu, toggle play/pause
+          isPlaying = !isPlaying;
+          Serial.println(isPlaying ? "PLAY" : "PAUSE");
+        }
+        longPressHandled = true; // Prevent multiple toggles
       }
     }
   } 
   else {
-    // Button is not pressed
+    // If the button was just released
     if (buttonReleased) {
+      // Determine if it was a short press
       bool shortPress = ((currentTime - buttonPressStartTime) <= doubleClickThreshold);
       if (!longPressHandled && shortPress) {
-        // Check for double-click
-        if ((currentTime - lastButtonPressTime) < doubleClickThreshold && lastButtonPressTime != 0) {
+        // Check if a single click is already pending
+        if (singleClickPending && (currentTime - singleClickTime < doubleClickThreshold)) {
+          // Double-click detected
+          singleClickPending = false;
           Serial.println("DOUBLE_CLICK");
           handleDoubleClick();
-          lastButtonPressTime = 0;
-        } else {
-          // Potential single click
-          if ((currentTime - lastRapidClickTime) > rapidClickInterval) {
-            rapidClickCount = 0;
-          }
-          rapidClickCount++;
-          lastRapidClickTime = currentTime;
-          if (rapidClickCount >= 5) {
-            toggleDisplay();
-            rapidClickCount = 0;
-          }
-          lastButtonPressTime = currentTime;
+        }
+        else {
+          // No double-click yet, set single-click as pending
+          singleClickPending = true;
+          singleClickTime  = currentTime;
+        }
 
-          // Single click for menu?
-          if (inMenu) handleMenuClick();
+        // Reset rapid click count if necessary
+        if ((currentTime - lastRapidClickTime) > rapidClickInterval) {
+          rapidClickCount = 0;
+        }
+        rapidClickCount++;
+        lastRapidClickTime = currentTime;
+        lastButtonPressTime = currentTime;
+
+        if (rapidClickCount >= 5) {
+          toggleDisplay();
+          rapidClickCount = 0;
         }
       }
     }
   }
 
-  lastStateCLK = currentStateCLK;
-  lastStateDT  = currentStateDT;
+  // Update the last states
+  lastStateCLK    = currentStateCLK;
+  lastStateDT     = currentStateDT;
   lastButtonState = currentButtonState;
-}
-
-void setup() {
-  delay(100);
-  Serial.begin(9600);
-
-  pinMode(CLK,INPUT);
-  pinMode(DT,INPUT);
-  pinMode(SW,INPUT_PULLUP);
-
-  lastStateCLK  = digitalRead(CLK);
-  lastStateDT   = digitalRead(DT);
-  lastButtonState = digitalRead(SW);
-
-  pinMode(LED_PIN,OUTPUT);
-  digitalWrite(LED_PIN,HIGH);
-
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)){
-    Serial.println("SSD1309 allocation failed");
-    while(true);
-  }
-  calculateSongPixelLength();
-  bootupAnimation();
-  applyDisplaySettings();
-}
-
-void loop() {
-  unsigned long currentTime = millis();
-  handleInputs(currentTime);
-
-  // Read any serial commands
-  if(Serial.available()){
-    String incoming = Serial.readStringUntil('\n');
-    handleSerialInput(incoming);
-  }
-
-  // Draw UI
-  displayUI();
-
-  // Blink LED if SW is held
-  controlLED(currentTime);
 }
