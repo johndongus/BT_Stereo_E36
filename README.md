@@ -47,6 +47,8 @@
   Resolve brightness control issues with the display. Seems im not the only one with this issue on this paticular board.
   `https://forum.pjrc.com/index.php?threads/how-does-one-control-the-brightness-of-an-oled-display-ssd1309.29265/`
 
+- **PAN network sharing**
+  This will give the pi network access via your connected device, probably..
 
 ---
 
