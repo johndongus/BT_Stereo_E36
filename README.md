@@ -31,13 +31,15 @@
 ## 🛠️ TODO Features
 
 - **Phone Support**  
-  Display caller name and number.
+  Display caller name and number. 
+  (This is done, but needs additional input support for awnsering / hanging up calls)
   
 - **Microphone Input**  
   Enable voice input and hands-free calling.
   
 - **Fast Forward and Rewind**  
   Implement song skipping and replay functionality.
+  (Needs to now be implemented on stereo frontend)
   
 - **Equalizer Settings**  
   Expand on existing menu for custom audio adjustments. Including finding a novel way to do equalization with pulseaudio, purely through command line. 
@@ -47,8 +49,6 @@
   Resolve brightness control issues with the display. Seems im not the only one with this issue on this paticular board.
   `https://forum.pjrc.com/index.php?threads/how-does-one-control-the-brightness-of-an-oled-display-ssd1309.29265/`
 
-- **Fast Charging**
-  Will be utilizing an existing fast charger to be torn down and used in this project for simplicity.
 
 ---
 
