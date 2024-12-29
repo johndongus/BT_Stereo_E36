@@ -25,22 +25,20 @@
 - **Song Information Display**  
 - **Song Seek Progress**  
 - **Volume Slider**  
-- **LED Indicator Light**  
+- **LED Indicator Light**
+- **Phone call support (Shows current number / contact, reject/accept incoming calls**
+- **Pause, Play, Skip, Go back**
 ---
 
 ## 🛠️ TODO Features
 
-- **Phone Support**  
-  Display caller name and number. 
-  (This is done, but needs additional input support for awnsering / hanging up calls)
+- **BT Interface**  
+  - Accept / Reject pairing request
+  - Paired device list with ability to remove device from list
   
 - **Microphone Input**  
   Enable voice input and hands-free calling.
-  
-- **Fast Forward and Rewind**  
-  Implement song skipping and replay functionality.
-  (Needs to now be implemented on stereo frontend)
-  
+
 - **Equalizer Settings**  
   Expand on existing menu for custom audio adjustments. Including finding a novel way to do equalization with pulseaudio, purely through command line. 
   Note on this, `pactl load-module module-ladspa-sink sink_name=ladspa_out sink_master=@DEFAULT_SINK@ plugin=caps label=Eq10 control=0,0,0,0,0,0,0,0,0,0`
@@ -49,6 +47,8 @@
   Resolve brightness control issues with the display. Seems im not the only one with this issue on this paticular board.
   `https://forum.pjrc.com/index.php?threads/how-does-one-control-the-brightness-of-an-oled-display-ssd1309.29265/`
 
+- **PAN network sharing**
+  This will give the pi network access via your connected device, probably..
 
 ---
 
