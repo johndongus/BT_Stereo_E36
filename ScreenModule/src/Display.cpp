@@ -20,6 +20,11 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT,
 #define SW 2
 #define LED_PIN 7
 
+const int maxDevices = 10;
+String deviceNames[maxDevices];
+String deviceMacs[maxDevices];
+int deviceCount = 0;
+
 // Encoder and button states
 int lastStateCLK, currentStateCLK, lastStateDT, currentStateDT, lastButtonState;
 
@@ -65,7 +70,8 @@ enum MenuState {
   DISPLAY_CONTRAST,
   SYSTEM_MENU,
   DEVICE_NAME_MENU,
-  CALL_MENU
+  CALL_MENU,
+  PAIRING_MENU
 };
 MenuState currentMenuState = MAIN_MENU;
 
@@ -76,11 +82,14 @@ const char* tunerItems[]       = { "Bass", "Treble", "Loudness" };
 const int   tunerCount         = 3;
 const char* displayItems[]     = { "Brightness" };
 const int   displayCount       = 1;
-const char* systemItems[]      = { "Restart Service", "Device Name" };
-const int   systemCount        = 2;
+const char* systemItems[] = { "Restart Service", "Device Name", "Pairing" };
+const int systemCount = 3;
 const char* callMenuItems[]    = { "Accept", "Reject" };
 const int   callMenuCount      = 2;
 
+
+const char* pairingMenuItems[] = {"Device 1", "Device 2", "Device 3", "Device 4", "Device 5"};
+const int pairingMenuCount = 5;
 // Variables for delayed single-click handling
 bool singleClickPending = false;
 unsigned long singleClickTime = 0;
@@ -108,6 +117,14 @@ void displayUI();
 void controlLED(unsigned long currentTime);
 void toggleDisplay();
 void handleInputs(unsigned long currentTime);
+
+void populateDeviceList(const String& mac, const String& name) {
+  if (deviceCount < maxDevices) {
+    deviceMacs[deviceCount] = mac;
+    deviceNames[deviceCount] = name;
+    deviceCount++;
+  }
+}
 
 void setup() {
   delay(100);
@@ -210,37 +227,172 @@ void softwareReset() {
   wdt_enable(WDTO_15MS);
   while(1) {}
 }
+// Remove a device from the list
+void removeDevice(int deviceIndex) {
+  if (deviceIndex < 0 || deviceIndex >= deviceCount) return;
 
-// --------------------------------------------------
-// handleSerialInput
-// --------------------------------------------------
+  // Shift devices down
+  for (int i = deviceIndex; i < deviceCount - 1; i++) {
+    deviceNames[i] = deviceNames[i + 1];
+    deviceMacs[i] = deviceMacs[i + 1];
+  }
+  deviceCount--;
+
+  Serial.println("Device removed.");
+}
+
+void displayDeviceDetails(int deviceIndex) {
+  if (deviceIndex < 0 || deviceIndex >= deviceCount) return;
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  // Display device name
+  display.setCursor(0, 0);
+  display.print("Name: ");
+  display.print(deviceNames[deviceIndex]);
+
+  // Display device MAC
+  display.setCursor(0, 10);
+  display.print("MAC: ");
+  display.print(deviceMacs[deviceIndex]);
+
+  // Display remove button
+  display.setCursor(0, 20);
+  display.print("[Remove]");
+
+  display.display();
+
+  // Wait for button input
+  while (true) {
+    int buttonState = digitalRead(SW);
+    if (buttonState == LOW && lastButtonState == HIGH) {
+      // Remove the device
+      removeDevice(deviceIndex);
+      inMenu = false;
+      currentMenuState = MAIN_MENU;
+      break;
+    }
+    lastButtonState = buttonState;
+  }
+}
+
+
+
+void displayPairingMenu(String passkey) {
+  inMenu = true;
+  currentMenuState = CALL_MENU;
+  subMenuIndex = 0;
+
+  while (inMenu) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+
+    // Display pairing information
+    display.setCursor(0, 0);
+ 
+    display.print("Passcode: ");
+    display.print(passkey);
+
+    // Display options
+    for (int i = 0; i < callMenuCount; i++) {
+      display.setCursor(0, 10 + (i * 10));
+      if (i == subMenuIndex) {
+        display.fillRect(0, 10 + (i * 10), 128, 10, SSD1306_WHITE);
+        display.setTextColor(SSD1306_BLACK);
+      } else {
+        display.setTextColor(SSD1306_WHITE);
+      }
+      display.print(callMenuItems[i]);
+    }
+    display.display();
+
+    // Handle encoder input
+    int currentStateCLK = digitalRead(CLK);
+    if (currentStateCLK != lastStateCLK) {
+      if (digitalRead(DT) != currentStateCLK) {
+        subMenuIndex = (subMenuIndex + 1) % callMenuCount;
+      } else {
+        subMenuIndex = (subMenuIndex - 1 + callMenuCount) % callMenuCount;
+      }
+      lastStateCLK = currentStateCLK;
+    }
+
+    // Handle button press
+    int buttonState = digitalRead(SW);
+    if (buttonState == LOW && lastButtonState == HIGH) {
+      if (subMenuIndex == 0) {
+        Serial.println("PAIRING:ACCEPT");
+      } else {
+        Serial.println("PAIRING:DECLINE");
+      }
+      inMenu = false;
+    }
+    lastButtonState = buttonState;
+  }
+}
+void populateDeviceListFromSerial(const String& data) {
+  // Clear the current device list
+  deviceCount = 0;
+
+  int startIdx = 0;
+  while (startIdx < data.length()) {
+    // Find the separator positions
+    int separatorIdx = data.indexOf('|', startIdx);
+    int nextDeviceIdx = data.indexOf(',', startIdx);
+
+    if (separatorIdx == -1 || (nextDeviceIdx != -1 && separatorIdx > nextDeviceIdx)) break;
+
+    // Extract address and name
+    String mac = data.substring(startIdx, separatorIdx);
+    String name = (nextDeviceIdx == -1) ? 
+                  data.substring(separatorIdx + 1) : 
+                  data.substring(separatorIdx + 1, nextDeviceIdx);
+
+    // Add to the list
+    populateDeviceList(mac, name);
+
+    // Move to the next device
+    startIdx = (nextDeviceIdx == -1) ? data.length() : nextDeviceIdx + 1;
+  }
+}
+
 void handleSerialInput(String input) {
   input.trim();
-  if(input.startsWith("SONG:")){
-    // Check if "[INCOMING]" substring => callIncoming = true
+
+  // Check if the message contains device data
+  if (input.startsWith("DEVICES:")) {
+    String deviceData = input.substring(8); // Remove the "DEVICES:" prefix
+    populateDeviceListFromSerial(deviceData); // Parse and populate devices
+
+  }
+  else if (input.startsWith("SONG:")) {
     if (input.indexOf("[INCOMING]") != -1) {
       callIncoming = true;
     }
     songName = input.substring(5);
     calculateSongPixelLength();
   } 
-  else if(input.startsWith("POS:")) {
+  else if (input.startsWith("POS:")) {
     currentPosition = input.substring(4).toInt();
   }
-  else if(input.startsWith("VOL:")) {
+  else if (input.startsWith("VOL:")) {
     volume = input.substring(4).toInt();
   }
-  else if(input.startsWith("STATE:")) {
+  else if (input.startsWith("STATE:")) {
     isPlaying = (input.substring(6) == "PLAY");
   }
-  else if(input.startsWith("BT:")) {
+  else if (input.startsWith("BT:")) {
     isBTConnected = (input.substring(3) == "ON");
   }
-  else if(input.equalsIgnoreCase("RESET")){
+  else if (input.equalsIgnoreCase("RESET")) {
     Serial.println("System is resetting...");
     softwareReset();
   }
 }
+
 
 // --------------------------------------------------
 // navigateMenu
@@ -271,12 +423,17 @@ void navigateMenu(int d) {
     if(subMenuIndex < 0) subMenuIndex = displayCount-1;
     if(subMenuIndex >= displayCount) subMenuIndex = 0;
   }
-  else if(currentMenuState == SYSTEM_MENU) {
-    if(subMenuIndex == 0) {
-      Serial.println("RESTART_SERVICE");
-    } else if(subMenuIndex == 1) {
-      Serial.println("DEVICE_NAME");
-    }
+  else if (currentMenuState == PAIRING_MENU) {
+    subMenuIndex += d;
+    if (subMenuIndex < 0) subMenuIndex = pairingMenuCount - 1;
+    if (subMenuIndex >= pairingMenuCount) subMenuIndex = 0;
+    return;
+  }
+
+  else if (currentMenuState == SYSTEM_MENU) {
+    subMenuIndex += d;
+    if (subMenuIndex < 0) subMenuIndex = systemCount - 1;
+    if (subMenuIndex >= systemCount) subMenuIndex = 0;
   }
   else if(currentMenuState == DISPLAY_BRIGHTNESS) {
     brightnessLevel += d;
@@ -284,10 +441,11 @@ void navigateMenu(int d) {
     applyDisplaySettings();
   }
 }
-
 // --------------------------------------------------
 // handleMenuClick
 // --------------------------------------------------
+
+
 void handleMenuClick() {
   if(!inMenu) return;
 
@@ -329,16 +487,33 @@ void handleMenuClick() {
       currentMenuState = DISPLAY_BRIGHTNESS;
     }
   }
-  else if(currentMenuState == SYSTEM_MENU) {
-    if(subMenuIndex == 0) {
+    if (currentMenuState == SYSTEM_MENU) {
+    if (subMenuIndex == 0) {
       Serial.println("RESTART_SERVICE");
-    } else if(subMenuIndex == 1) {
+    } else if (subMenuIndex == 1) {
       currentMenuState = DEVICE_NAME_MENU;
       subMenuIndex = 0;
+    } else if (subMenuIndex == 2) {
+      // Go to Pairing Menu
+      Serial.println("GET_PAIRED_DEVICES"); // Send command to get paired devices
+      delay(10); // Allow time for serial transmission
+      currentMenuState = PAIRING_MENU; // Change state after sending the command
+      subMenuIndex = 0;
     }
+  } else if (currentMenuState == DISPLAY_MENU) {
+    if (subMenuIndex == 0) {
+      currentMenuState = DISPLAY_BRIGHTNESS;
+      Serial.println("DISPLAY_BRIGHTNESS_MENU_SELECTED");
+    }
+  } else if (currentMenuState == DISPLAY_BRIGHTNESS) {
+    // Handle actions for brightness menu
+    Serial.println("ADJUSTING_BRIGHTNESS");
+  } else if (currentMenuState == PAIRING_MENU) {
+    // Handle selection in Pairing Menu
+    Serial.println(String("PAIRING_SELECT:") + pairingMenuItems[subMenuIndex]);
   }
-}
 
+}
 // --------------------------------------------------
 // handleDoubleClick
 // --------------------------------------------------
@@ -375,10 +550,13 @@ void drawMenu(const char* items[], int count, int selected) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  for(int i=0; i<count; i++){
-    display.setCursor(0, i*10);
-    if(i == selected){
-      display.fillRect(0, i*10, 128, 10, SSD1306_WHITE);
+
+  int startIdx = max(0, min(selected - 1, count - 3)); // Scroll to show 3 items
+  for (int i = startIdx; i < min(startIdx + 3, count); i++) {
+    int y = (i - startIdx) * 10;
+    display.setCursor(0, y);
+    if (i == selected) {
+      display.fillRect(0, y, 128, 10, SSD1306_WHITE);
       display.setTextColor(SSD1306_BLACK);
     } else {
       display.setTextColor(SSD1306_WHITE);
@@ -387,6 +565,38 @@ void drawMenu(const char* items[], int count, int selected) {
   }
   display.display();
 }
+
+  void displayMenu() {
+    switch (currentMenuState) {
+      case MAIN_MENU:
+        drawMenu(mainMenuItems, mainMenuCount, menuIndex);
+        break;
+      case TUNER_MENU:
+        drawMenu(tunerItems, tunerCount, subMenuIndex);
+        break;
+      case DISPLAY_MENU:
+        drawMenu(displayItems, displayCount, subMenuIndex);
+        break;
+      case DISPLAY_BRIGHTNESS:
+        drawValueMenu("Brightness", brightnessLevel);
+        break;
+      case DISPLAY_CONTRAST:
+        drawValueMenu("Contrast", contrastLevel);
+        break;
+      case SYSTEM_MENU:
+        drawMenu(systemItems, systemCount, subMenuIndex);
+        break;
+      case DEVICE_NAME_MENU:
+        drawValueMenu_S("Device Name", deviceName);
+        break;
+      case CALL_MENU:
+        drawMenu(callMenuItems, callMenuCount, subMenuIndex);
+        break;
+      case PAIRING_MENU:
+        drawMenu(pairingMenuItems, pairingMenuCount, subMenuIndex);
+        break;
+    }
+  }
 
 void drawValueMenu(String title, int value) {
   display.clearDisplay();
@@ -415,37 +625,6 @@ void drawValueMenu_S(String title, String textValue) {
   display.display();
 }
 
-// --------------------------------------------------
-// displayMenu
-// --------------------------------------------------
-void displayMenu() {
-  switch(currentMenuState) {
-    case MAIN_MENU:
-      drawMenu(mainMenuItems, mainMenuCount, menuIndex);
-      break;
-    case TUNER_MENU:
-      drawMenu(tunerItems, tunerCount, subMenuIndex);
-      break;
-    case DISPLAY_MENU:
-      drawMenu(displayItems, displayCount, subMenuIndex);
-      break;
-    case DISPLAY_BRIGHTNESS:
-      drawValueMenu("Brightness", brightnessLevel);
-      break;
-    case DISPLAY_CONTRAST:
-      drawValueMenu("Contrast", contrastLevel);
-      break;
-    case SYSTEM_MENU:
-      drawMenu(systemItems, systemCount, subMenuIndex);
-      break;
-    case DEVICE_NAME_MENU:
-      drawValueMenu_S("Device Name", deviceName);
-      break;
-    case CALL_MENU:
-      drawMenu(callMenuItems, callMenuCount, subMenuIndex);
-      break;
-  }
-}
 
 // --------------------------------------------------
 // The main UI when not in a menu
@@ -694,9 +873,7 @@ void handleInputs(unsigned long currentTime) {
       }
     } 
     else {
-     
       if (buttonPressed) {
-        
         inFFRWMode = true;
 
         if (currentStateDT != currentStateCLK) {
@@ -706,18 +883,15 @@ void handleInputs(unsigned long currentTime) {
           ffRwAccum--;
         }
 
-       
-        if (abs(ffRwAccum) >= 2) { /
+        if (abs(ffRwAccum) >= 2) { 
           if (ffRwAccum > 0) {
             Serial.println("FF");
-            // Start FF animation
             fastForwardAnimationActive = true;
             rewindAnimationActive      = false;
             animationStartTime         = currentTime;
           }
           else {
             Serial.println("RW");
-            // Start RW animation
             rewindAnimationActive      = true;
             fastForwardAnimationActive = false;
             animationStartTime         = currentTime;
@@ -726,7 +900,6 @@ void handleInputs(unsigned long currentTime) {
         }
       }
       else {
-       
         ffRwAccum  = 0;
         inFFRWMode = false;
 
@@ -744,51 +917,40 @@ void handleInputs(unsigned long currentTime) {
 
   // Handle button press/release events
   if (buttonPressed) {
-    // If the button was just pressed
     if (lastButtonState == HIGH) {
       buttonPressStartTime = currentTime;
       longPressHandled     = false;
-      // Reset FF/RW mode when starting a new press
       inFFRWMode           = false;
     }
     else {
-      // If the button is being held down
       if (!longPressHandled && !inFFRWMode && (heldTime > longPressThreshold)) {
         if (inMenu && currentMenuState != MAIN_MENU) {
-          // If in a submenu, exit back to main menu
           inMenu = false;
           currentMenuState = MAIN_MENU;
           Serial.println("Exited to Main Menu via Long Press.");
         }
         else {
-          // If not in a submenu, toggle play/pause
           isPlaying = !isPlaying;
           Serial.println(isPlaying ? "PLAY" : "PAUSE");
         }
-        longPressHandled = true; // Prevent multiple toggles
+        longPressHandled = true;
       }
     }
   } 
   else {
-    // If the button was just released
     if (buttonReleased) {
-      // Determine if it was a short press
       bool shortPress = ((currentTime - buttonPressStartTime) <= doubleClickThreshold);
       if (!longPressHandled && shortPress) {
-        // Check if a single click is already pending
         if (singleClickPending && (currentTime - singleClickTime < doubleClickThreshold)) {
-          // Double-click detected
           singleClickPending = false;
           Serial.println("DOUBLE_CLICK");
           handleDoubleClick();
         }
         else {
-          // No double-click yet, set single-click as pending
           singleClickPending = true;
           singleClickTime  = currentTime;
         }
 
-        // Reset rapid click count if necessary
         if ((currentTime - lastRapidClickTime) > rapidClickInterval) {
           rapidClickCount = 0;
         }
@@ -801,6 +963,14 @@ void handleInputs(unsigned long currentTime) {
           rapidClickCount = 0;
         }
       }
+    }
+  }
+
+  // Handle pending single click (for delayed processing)
+  if (singleClickPending && (currentTime - singleClickTime > doubleClickThreshold)) {
+    singleClickPending = false;
+    if (inMenu) {
+      handleMenuClick();
     }
   }
 
