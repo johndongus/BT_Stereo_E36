@@ -469,6 +469,7 @@ class BluetoothManager:
             self.handle_serial_disconnect()
         return True  # Keep the callback active
 
+
     def send_seek_percentage(self, position):
         if self.duration and self.duration > 0:
             seek_percentage = int((position / self.duration) * 100)
@@ -477,6 +478,28 @@ class BluetoothManager:
             logging.info(f"Seek percentage: {seek_percentage}%")
         else:
             logging.warning("Duration not set. Cannot calculate seek percentage.")
+
+    def send_seek_position(self):
+        """
+        Query the current playback position and send it to the serial device as a percentage.
+        """
+        if self.media_player_path and self.duration:
+            try:
+                bus = dbus.SystemBus()
+                player = bus.get_object("org.bluez", self.media_player_path)
+                media_player = dbus.Interface(player, "org.freedesktop.DBus.Properties")
+
+                # Retrieve the current position
+                position = media_player.Get("org.bluez.MediaPlayer1", "Position")
+
+                # Send the seek percentage
+                self.send_seek_percentage(position)
+            except dbus.exceptions.DBusException as e:
+                logging.error(f"Error retrieving position for seek percentage: {e}")
+                self.schedule_reset()
+        else:
+            logging.warning("Media player or duration is not available.")
+        return True  # Return True to keep the timeout active
 
     def set_volume(self, level):
         if 0 <= level <= 100:
@@ -561,6 +584,8 @@ class BluetoothManager:
             GLib.timeout_add_seconds(2, self.poll_media_info)
             # Poll call info every 5 seconds
             GLib.timeout_add_seconds(5, self.poll_call_info)
+            # Poll seek position every 1 second
+            GLib.timeout_add_seconds(2, self.send_seek_position)
 
             # Add an IO watch for serial data
             try:

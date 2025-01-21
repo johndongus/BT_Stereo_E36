@@ -1,30 +1,31 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <avr/wdt.h>
+
 #include <avr/pgmspace.h>
 
 // --------------------------------------------------
 // 1) Display Definitions
 // --------------------------------------------------
 #define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 32
+#define SCREEN_HEIGHT 64
+#define OLED_DC    6
+#define OLED_CS    10
+#define OLED_RESET 5
 
-#define OLED_MOSI 11
-#define OLED_CLK  13
-#define OLED_DC   6
-#define OLED_CS   8
-#define OLED_RESET 9
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, 
-                         OLED_MOSI, OLED_CLK, OLED_DC, 
-                         OLED_RESET, OLED_CS);
+// Edit adafjruit_ssd1306.h to change display size in both areas, and comment out the define for HAVE_PORTREG with arm
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &SPI, OLED_DC, OLED_RESET, OLED_CS);
+
 
 // --------------------------------------------------
 // 2) Pins, Arrays, and Global Variables
 // --------------------------------------------------
 #define CLK 4
-#define DT 3
-#define SW 2
+#define DT 2
+#define SW 3
 #define LED_PIN 7
 
 const int maxDevices = 10;
@@ -43,8 +44,8 @@ unsigned long lastRapidClickTime   = 0;
 
 // Flags and states
 bool longPressHandled    = false;
-bool isPlaying           = true;
-bool isBTConnected       = true;
+bool isPlaying           = false;
+bool isBTConnected       = false;
 bool inMenu              = false;
 bool displayOn           = true;
 bool callIncoming        = false;
@@ -88,46 +89,45 @@ MenuState currentMenuState = MAIN_MENU;
 // 4) Store Menu Items in PROGMEM
 // --------------------------------------------------
 // Main Menu
-const char mainMenu0[] PROGMEM = "Tuner";
-const char mainMenu1[] PROGMEM = "Display";
-const char mainMenu2[] PROGMEM = "System";
-const char* const mainMenuItems[] PROGMEM = { mainMenu0, mainMenu1, mainMenu2 };
+String mainMenu0 = "Tuner";
+String mainMenu1 = "Display";
+String mainMenu2 = "System";
+String mainMenuItems[] = { mainMenu0, mainMenu1, mainMenu2 };
 const int mainMenuCount = 3;
 
 // Tuner
-const char tuner0[] PROGMEM = "Bass";
-const char tuner1[] PROGMEM = "Treble";
-const char tuner2[] PROGMEM = "Loudness";
-const char* const tunerItems[] PROGMEM = { tuner0, tuner1, tuner2 };
+String tuner0 = "Bass";
+String tuner1 = "Treble";
+String tuner2 = "Loudness";
+String tunerItems[] = { tuner0, tuner1, tuner2 };
 const int tunerCount = 3;
 
 // Display
-const char display0[] PROGMEM = "Brightness";
-const char* const displayItems[] PROGMEM = { display0 };
+String display0 = "Brightness";
+String displayItems[] = { display0 };
 const int displayCount = 1;
 
 // System
-const char system0[] PROGMEM = "Restart Service";
-const char system1[] PROGMEM = "Device Name";
-const char system2[] PROGMEM = "Pairing";
-const char* const systemItems[] PROGMEM = { system0, system1, system2 };
+String system0 = "Restart Service";
+String system1 = "Device Name";
+String system2 = "Pairing";
+String systemItems[] = { system0, system1, system2 };
 const int systemCount = 3;
 
 // Call
-const char call0[] PROGMEM = "Accept";
-const char call1[] PROGMEM = "Reject";
-const char* const callMenuItems[] PROGMEM = { call0, call1 };
+String call0 = "Accept";
+String call1 = "Reject";
+String callMenuItems[] = { call0, call1 };
 const int callMenuCount = 2;
 
 // Pairing
-const char pair0[] PROGMEM = "Device 1";
-const char pair1[] PROGMEM = "Device 2";
-const char pair2[] PROGMEM = "Device 3";
-const char pair3[] PROGMEM = "Device 4";
-const char pair4[] PROGMEM = "Device 5";
-const char* const pairingMenuItems[] PROGMEM = {
-  pair0, pair1, pair2, pair3, pair4
-};
+String pair0 = "Device 1";
+String pair1 = "Device 2";
+String pair2 = "Device 3";
+String pair3 = "Device 4";
+String pair4 = "Device 5";
+String pairingMenuItems[] = { pair0, pair1, pair2, pair3, pair4 };
+
 const int pairingMenuCount = 5;
 
 // Variables for delayed single-click handling
@@ -276,7 +276,7 @@ void boldText(String text) {
 
 // --------------------------------------------------
 void softwareReset() {
-  wdt_enable(WDTO_15MS);
+  //wdt_enable(WDTO_15MS);
   while(1) {}
 }
 
@@ -581,14 +581,12 @@ void handleDoubleClick() {
 // --------------------------------------------------
 // drawMenu: Now reads strings from PROGMEM
 // --------------------------------------------------
-void drawMenuItemFromPROGMEM(const char* const *menuItems, int index, int y) {
-  char buffer[16];
-  strcpy_P(buffer, (char*)pgm_read_word(&(menuItems[index])));
+void drawMenuItem(String menuItem, int y) {
   display.setCursor(0, y);
-  display.print(buffer);
+  display.print(menuItem);
 }
 
-void drawMenu(const char* const menuItems[], int count, int selected) {
+void drawMenu(String menuItems[], int count, int selected) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -603,7 +601,7 @@ void drawMenu(const char* const menuItems[], int count, int selected) {
       display.setTextColor(SSD1306_WHITE);
     }
     // Copy string from PROGMEM for display
-    drawMenuItemFromPROGMEM(menuItems, i, y);
+     drawMenuItem(menuItems[i], y);
   }
   display.display();
 }
@@ -686,11 +684,45 @@ int songScrollOffset   = 0;
 int artistScrollOffset = 0;
 unsigned long lastScrollUpdate = 0;
 const unsigned long scrollInterval = 150;
+const int PROGRESS_BAR_Y       = 0;   // Y for the top progress bar
+const int SCROLL_SONG_Y        = 3;   // Y for scrolling song title
+const int SCROLL_ARTIST_Y      = 24;  // Y for scrolling artist
+const int PLAY_PAUSE_Y         = 36;  // Y for the play/pause symbol
+const int VOLUME_BAR_Y         = 50;  // Y for the volume bar (near bottom)
+const int VOLUME_BAR_HEIGHT    = 5;   // Thickness of the volume bar
+const int VOLUME_BAR_LEFT      = 18;  // Where volume bar starts (X)
+const int VOLUME_LABEL_Y_OFFSET= 0;  // Vertical offset for volume # label above the bar
+const int VOLUME_BAR_RIGHT_PAD = 24;  // Space on the right side for ticks
+void drawPlayPauseButton(bool isPlaying, int x, int y) {
+    static const char* playFrames[] = {">", ">>", ">"};
+    static const char* pauseFrames[] = {"| |", "|.|", "| |"};
+    static int frameCounter = 0; // Counter to track frames
+    static int playButtonFrame = 0; // Current frame index
+
+    // Clear the area before drawing the button
+    display.fillRect(x, y, 10, 10, SSD1306_BLACK);
+
+    // Select and draw the current frame
+    if (isPlaying) {
+        display.setCursor(x, y);
+        boldText(playFrames[playButtonFrame]); // Use play frames
+    } else {
+        display.setCursor(x, y);
+        boldText(pauseFrames[playButtonFrame]); // Use pause frames
+    }
+
+    // Increment frame counter and switch frame every 5 frames
+    frameCounter++;
+    if (frameCounter >= 200) {
+        playButtonFrame = (playButtonFrame + 1) % 3; // Cycle through 3 frames
+        frameCounter = 0; // Reset counter
+    }
+}
 
 void displayUI() {
   if (!displayOn) return;
 
-  // Check if in FF/RW animation
+  // Check for FF/RW animation
   if (fastForwardAnimationActive || rewindAnimationActive) {
     unsigned long animTime = millis() - animationStartTime;
     if (animTime < animationDuration) {
@@ -698,25 +730,25 @@ void displayUI() {
       display.setTextSize(2);
       display.setTextColor(SSD1306_WHITE);
 
-      int xCenter = (SCREEN_WIDTH / 2) - 6;
-      int yCenter = (SCREEN_HEIGHT / 2) - 8;
+      // Center the animation in a 128x64 screen
+      int xCenter = (SCREEN_WIDTH / 2) - 12;  // A bit wider offset to center the ">>" or "<<"
+      int yCenter = (SCREEN_HEIGHT / 2) - 8;  
       display.setCursor(xCenter, yCenter);
 
       if (fastForwardAnimationActive) {
         display.print(F(">>"));
-      }
-      else if (rewindAnimationActive) {
+      } else if (rewindAnimationActive) {
         display.print(F("<<"));
       }
       display.display();
       return;
-    }
-    else {
+    } else {
       fastForwardAnimationActive = false;
       rewindAnimationActive      = false;
     }
   }
 
+  // If in a menu, handle that separately
   if (inMenu) {
     displayMenu();
     return;
@@ -725,14 +757,18 @@ void displayUI() {
   // Normal UI
   display.setTextWrap(false);
   display.clearDisplay();
-  display.setTextSize(1);
+  display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
 
-  int seekLineWidth = map(currentPosition, 2, 100, 2, 128);
-  if (seekLineWidth > 2) {
-    display.drawLine(0, 0, seekLineWidth, 0, SSD1306_WHITE);
-  }
+  /****************************************
+   * Progress (seek) bar at the top
+   ****************************************/
+  int seekLineWidth = map(currentPosition, 0, 100, 0, SCREEN_WIDTH);
+  display.drawLine(0, PROGRESS_BAR_Y, seekLineWidth, PROGRESS_BAR_Y, SSD1306_WHITE);
 
+  /****************************************
+   * Separate "Artist - Song" into strings
+   ****************************************/
   int sep = songName.indexOf(" - ");
   String artist = "";
   String song   = "";
@@ -740,104 +776,133 @@ void displayUI() {
     artist = songName.substring(0, sep);
     song   = songName.substring(sep + 3);
   } else {
-    song   = songName;
+    song = songName;
   }
 
+  /****************************************
+   * Scroll logic for longer text
+   ****************************************/
   if (millis() - lastScrollUpdate > scrollInterval) {
     lastScrollUpdate = millis();
+    
     if (song.length() > 21) {
+      // Each char is ~6px wide in textSize=1
       songScrollOffset = (songScrollOffset + 1) 
-                         % ((song.length() * 6) - SCREEN_WIDTH + 6);
+                            % ((song.length() * 12) - SCREEN_WIDTH + 12);
     } else {
       songScrollOffset = 0;
     }
+    
     if (artist.length() > 21) {
       artistScrollOffset = (artistScrollOffset + 1) 
-                           % ((artist.length() * 6) - SCREEN_WIDTH + 6);
+                              % ((artist.length() * 12) - SCREEN_WIDTH + 12);
     } else {
       artistScrollOffset = 0;
     }
   }
 
-  // Draw scrolling song
-  int songW = song.length() * 6;
+  /****************************************
+   * Draw scrolling song text
+   ****************************************/
+  // Clear the region first
+  display.fillRect(0, SCROLL_SONG_Y, SCREEN_WIDTH, 12, SSD1306_BLACK);
+
+  int songW = song.length() * 12;
   int songX = (SCREEN_WIDTH - min(SCREEN_WIDTH, songW)) / 2;
-  display.fillRect(0, 2, SCREEN_WIDTH, 12, SSD1306_BLACK);
-
   for (int i = 0; i < (int)song.length(); i++) {
-    int charX = songX + (i * 6) - songScrollOffset;
-    if ((charX + 7) <= 0) continue;
+    int charX = songX + (i * 12) - songScrollOffset;
+    if ((charX + 13) <= 0)   continue;
     if (charX >= SCREEN_WIDTH) break;
-
-    display.setCursor(charX, 2);
-    display.write(song[i]);
-    display.setCursor(charX + 1, 2);
+    
+    display.setCursor(charX, SCROLL_SONG_Y);
     display.write(song[i]);
   }
-
-  // Draw scrolling artist
+  display.setTextSize(1);
+  display.setCursor(0, display.getCursorY() + 6);
+  /****************************************
+   * Draw scrolling artist text (if present)
+   ****************************************/
   if (sep != -1) {
+    display.fillRect(0, SCROLL_ARTIST_Y, SCREEN_WIDTH, 12, SSD1306_BLACK);
+
     int artistW = artist.length() * 6;
     int artistX = (SCREEN_WIDTH - min(SCREEN_WIDTH, artistW)) / 2;
-    display.fillRect(0, 14, SCREEN_WIDTH, 12, SSD1306_BLACK);
-
     for (int i = 0; i < (int)artist.length(); i++) {
       int charX = artistX + (i * 6) - artistScrollOffset;
-      if ((charX + 6) <= 0) continue;
+      if ((charX + 6) <= 0)   continue;
       if (charX >= SCREEN_WIDTH) break;
 
-      display.setCursor(charX, 14);
+      display.setCursor(charX, SCROLL_ARTIST_Y);
       display.write(artist[i]);
     }
   }
 
-  // Clear bottom line
-  for (int i = 0; i < SCREEN_WIDTH; i++) {
-    display.drawLine(i, SCREEN_HEIGHT, i, SCREEN_HEIGHT, SSD1306_BLACK);
+  /****************************************
+   * Play/Pause indicator, near middle
+   ****************************************/
+  int playPauseX = (SCREEN_WIDTH - 6) / 2; 
+  // Y is defined from layout constant
+  // if (isPlaying) {
+  //    display.setCursor(playPauseX, PLAY_PAUSE_Y);
+  //     boldText(">");
+  //   // static const unsigned char playIconLeft[]  = {
+  //   //   0b01110000,
+  //   //   0b01111000,
+  //   //   0b01111100,
+  //   //   0b01111100,
+  //   //   0b01111000,
+  //   //   0b01110000
+  //   // };
+  //   // display.drawBitmap(playPauseX, PLAY_PAUSE_Y, playIconLeft, 6, 6, SSD1306_WHITE);
+  // } else {
+  //   drawPlayPauseButton(isPlaying, playPauseX, PLAY_PAUSE_Y);
+
+  // //  display.setCursor(playPauseX, PLAY_PAUSE_Y);
+  //  // boldText("=");  // or just display.print("||") for pause
+  // }
+  display.setCursor(playPauseX, PLAY_PAUSE_Y);
+  drawPlayPauseButton(isPlaying, playPauseX, PLAY_PAUSE_Y);
+
+
+  /****************************************
+   * Volume bar near bottom
+   ****************************************/
+  // Example: map volume to width from 0 .. (SCREEN_WIDTH - some padding)
+  int availableWidth = SCREEN_WIDTH - (VOLUME_BAR_LEFT + VOLUME_BAR_RIGHT_PAD);
+  int volumeBarWidth = map(volume, 0, 100, 0, availableWidth);
+  display.fillRect(VOLUME_BAR_LEFT, 
+                   VOLUME_BAR_Y, 
+                   volumeBarWidth, 
+                   VOLUME_BAR_HEIGHT + 1, 
+                   SSD1306_WHITE);
+
+  // Draw ticks every 5 units
+  for (int v = 0; v <= 100; v += 10) {
+    int tickPosition = map(v, 0, 100, VOLUME_BAR_LEFT, VOLUME_BAR_LEFT + availableWidth);
+    display.drawLine(tickPosition, 
+                     VOLUME_BAR_Y, 
+                     tickPosition, 
+                     VOLUME_BAR_Y + VOLUME_BAR_HEIGHT, 
+                     SSD1306_WHITE);
   }
 
-  // Volume bar
-  int volumeBarWidth = map(volume, 0, 100, 0, 90);
-  display.fillRect(18, 28, volumeBarWidth, 2, SSD1306_WHITE);
-
-  // Volume ticks
-  for (int v = 0; v <= 100; v += 5) {
-    int tickPosition = map(v, 0, 100, 18, 108);
-    display.drawLine(tickPosition, 28, tickPosition, 29, SSD1306_WHITE);
-  }
-
-  // Volume number
-  display.setCursor(0, 24);
+  // Volume number to the left of the bar
+  display.setCursor(0, VOLUME_BAR_Y + VOLUME_LABEL_Y_OFFSET);
   display.print(volume);
 
-  // Play/pause indicator
-  int playPauseX = (SCREEN_WIDTH - 6) / 2;
-  int playPauseY = 21;
-  if (isPlaying) {
-    static const unsigned char playIconLeft[] PROGMEM = {
-      0b01110000,
-      0b01111000,
-      0b01111100,
-      0b01111100,
-      0b01111000,
-      0b01110000
-    };
-    display.drawBitmap(playPauseX, playPauseY, playIconLeft, 6, 6, SSD1306_WHITE);
-  } else {
-    display.setCursor(playPauseX, playPauseY);
-    boldText("=");
-  }
-
-  // Bluetooth indicator
-  if(isBTConnected) {
-    display.setCursor(SCREEN_WIDTH - 12, 24);
+  /****************************************
+   * Bluetooth indicator
+   ****************************************/
+  if (isBTConnected) {
+    // Put it at top-right corner or anywhere you want
+    display.setCursor(SCREEN_WIDTH - 14, SCREEN_HEIGHT - 14);
+ 
     display.print(F("BT"));
   }
 
-
+  // Finally, update the display
   display.display();
 }
-
 // --------------------------------------------------
 void controlLED(unsigned long currentTime) {
   static bool isFlashing = false;
