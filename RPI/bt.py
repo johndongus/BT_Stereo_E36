@@ -1,3 +1,4 @@
+
 import os
 import sys
 import dbus
@@ -5,11 +6,11 @@ import dbus.service
 import dbus.mainloop.glib
 from gi.repository import GLib
 from subprocess import run, CalledProcessError, PIPE
-import time
-import serial
-import serial.tools.list_ports
+import threading
+
 from enum import Enum
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -61,10 +62,13 @@ class BluetoothAgent(dbus.service.Object):
         return
 
 
-class BluetoothManager:
+class BluetoothManager():
     AGENT_PATH = "/test/agent"
 
-    def __init__(self, capability='KeyboardDisplay', baudrate=9600, reset_delay=5):
+    def __init__(self, capability='KeyboardDisplay', baudrate=9600, reset_delay=5, ui_manager=None):
+        if ui_manager is None:
+            raise ValueError("UIManager instance must be provided to BluetoothManager.")
+        self.ui_manager = ui_manager
         self.capability = capability
         self.past_devices = []
         self.connected_device = None
@@ -74,14 +78,16 @@ class BluetoothManager:
         self.current_volume = 100  # Volume level (0-100)
         self.is_playing = False
         self.is_bt_connected = False
-        self.current_song = "Unknown Artist - Unknown Title"
+        self.current_song = ""
         self.current_pos = 0
         self.duration = None  # Duration in microseconds
         self.command_cooldown = False
+        self.last_volume_level = None 
         self.reset_delay = reset_delay
 
         # Store the path of the last known incoming call so we can accept/reject it
         self.last_incoming_call_path = None
+        self.running = True  # Control flag for the run loop
 
     def add_to_past_devices(self, device):
         if device not in self.past_devices:
@@ -114,31 +120,6 @@ class BluetoothManager:
             logging.info(f"Trusted device: {device_address}")
         except CalledProcessError as e:
             logging.error(f"Failed to trust device {device_address}: {e}")
-
-    def setup_serial(self):
-        ports = serial.tools.list_ports.comports()
-        if not ports:
-            logging.error("No serial ports found. Please connect the Arduino.")
-            return False
-        self.serial_port = ports[0].device
-        try:
-            self.serial_conn = serial.Serial(self.serial_port, self.baudrate, timeout=1)
-            logging.info(f"Connected to serial port {self.serial_port} at {self.baudrate} baud.")
-            # Example command, if desired:
-            # self.send_to_serial("RESET")
-            return True
-        except serial.SerialException as e:
-            logging.error(f"Failed to connect to serial port {self.serial_port}: {e}")
-            return False
-
-    def send_to_serial(self, message):
-        if self.serial_conn and self.serial_conn.is_open:
-            try:
-                self.serial_conn.write((message + "\n").encode('utf-8'))
-                logging.debug(f"Sent to Arduino: {message}")
-            except serial.SerialException as e:
-                logging.error(f"Failed to send to Arduino: {e}")
-                self.handle_serial_disconnect()
 
     def list_managed_objects(self):
         try:
@@ -248,12 +229,14 @@ class BluetoothManager:
                         if state == 'incoming':
                             self.last_incoming_call_path = call_path
                             call_info = f"[INCOMING] {contact_name} - {number}"
-                            self.send_to_serial("SONG:" + call_info)
+                            #self.ui_manager.set_song(call_info)
+                            self.ui_manager.songName = call_info
                             logging.info(f"Incoming call info sent: {call_info}")
                         elif state == 'active':
                             # Optionally update display for an active call
                             call_info = f"[ACTIVE] {contact_name} - {number}"
-                            self.send_to_serial("SONG:" + call_info)
+                            self.ui_manager.songName = call_info
+                            #self.ui_manager.set_song(call_info)
                             logging.info(f"Active call info sent: {call_info}")
 
         except dbus.exceptions.DBusException as e:
@@ -262,7 +245,7 @@ class BluetoothManager:
         return True  # Keep the timeout active
 
     # -------------------------------------------------------------
-    #  Poll for Media Info ...
+    #  Poll for Media Info
     # -------------------------------------------------------------
     def poll_media_info(self):
         try:
@@ -273,21 +256,20 @@ class BluetoothManager:
                 if 'org.bluez.MediaPlayer1' in interfaces:
                     props = interfaces['org.bluez.MediaPlayer1']
                     track = props.get('Track', {})
-                    artist = track.get('Artist', ["Unknown Artist"])
-                    title = track.get('Title', "Unknown Title")
+                    artist = track.get('Artist', "")
+                    title = track.get('Title', "")
                     cs = f"{artist} - {title}"
-                    if cs != self.current_song:
+                    if cs != self.current_song and title != "":
                         self.current_song = cs
-                        self.send_to_serial("SONG:" + self.current_song)
+                        self.ui_manager.songName = self.current_song
                         logging.info(f"Updated song: {self.current_song}")
 
                     status = props.get('Status', 'stopped').lower()
                     playing = (status == "playing")
                     if playing != self.is_playing:
                         self.is_playing = playing
-                        st = "PLAY" if playing else "PAUSE" if status == "paused" else "STOP"
-                        self.send_to_serial("STATE:" + st)
-                        logging.info(f"Updated state: {st}")
+                        self.ui_manager.isPlaying = playing
+                
 
                     if 'Duration' in track:
                         self.duration = track['Duration']  # microseconds
@@ -305,7 +287,7 @@ class BluetoothManager:
                     if connected != self.is_bt_connected:
                         self.is_bt_connected = connected
                         btstate = "ON" if connected else "OFF"
-                        self.send_to_serial("BT:" + btstate)
+
                         logging.info(f"Updated BT connection state: {btstate}")
         except Exception as e:
             logging.error(f"Error polling media info: {e}")
@@ -329,16 +311,15 @@ class BluetoothManager:
                     cs = f"{artist} - {title}"
                     if cs != self.current_song:
                         self.current_song = cs
-                        self.send_to_serial("SONG:" + self.current_song)
+                        #self.ui_manager.set_song(self.current_song)
+                        self.ui_manager.songName = self.current_song
                         logging.info(f"Updated song from signal: {self.current_song}")
 
                 status = changed.get("Status", 'stopped').lower()
                 playing = (status == "playing")
                 if playing != self.is_playing:
                     self.is_playing = playing
-                    st = "PLAY" if playing else "PAUSE" if status == "paused" else "STOP"
-                    self.send_to_serial("STATE:" + st)
-                    logging.info(f"Updated state from signal: {st}")
+                    self.ui_manager.isPlaying = playing
 
                 if 'Duration' in track and self.duration is None:
                     self.duration = track['Duration']
@@ -356,7 +337,7 @@ class BluetoothManager:
                 connected = changed.get("Connected", False)
                 btstate = "ON" if connected else "OFF"
                 self.is_bt_connected = connected
-                self.send_to_serial("BT:" + btstate)
+                #elf.send_to_serial("BT:" + btstate)
                 logging.info(f"Updated BT connection state: {btstate}")
 
         bus = dbus.SystemBus()
@@ -375,9 +356,16 @@ class BluetoothManager:
         else:
             logging.warning("No connected device name to send.")
 
+
     def control_playback(self, command):
+        """
+        Control media playback based on the received command.
+
+        Args:
+            command (str): Command to control playback ("play", "pause", "next", "prev", "DEVICE_NAME").
+        """
         if not self.media_player_path:
-            logging.error("No media player available.")
+            logging.error("BluetoothManager: No media player available.")
             return
 
         bus = dbus.SystemBus()
@@ -387,94 +375,44 @@ class BluetoothManager:
         try:
             if command == "play":
                 media_player.Play()
-                logging.info("Executed play command.")
+                logging.info("BluetoothManager: Executed 'play' command.")
             elif command == "pause":
                 media_player.Pause()
-                logging.info("Executed pause command.")
+                logging.info("BluetoothManager: Executed 'pause' command.")
                 if not self.command_cooldown:
                     self.command_cooldown = True
                     GLib.timeout_add(200, self.reset_command_cooldown)
-            elif command == "ff":
+            elif command == "next":
                 media_player.Next()
-                logging.info("Executed next command.")
-            elif command == "rw":
+                logging.info("BluetoothManager: Executed 'next' command.")
+            elif command == "prev":
                 media_player.Previous()
-                logging.info("Executed previous command.")
-
-                logging.info("Executed rewind command.")
+                logging.info("BluetoothManager: Executed 'prev' command.")
             elif command == "DEVICE_NAME":
                 self.send_device_name()
             else:
-                logging.error(f"Unknown command: {command}")
+                logging.error(f"BluetoothManager: Unknown command: {command}")
         except dbus.exceptions.DBusException as e:
-            logging.error(f"Error executing {command} command: {e}")
+            logging.error(f"BluetoothManager: Error executing '{command}' command: {e}")
             self.schedule_reset()
 
     def reset_command_cooldown(self):
         self.command_cooldown = False
         return False  # Remove the timeout
 
-    # -------------------------------------------------------------
-    #  Handle Serial Input
-    # -------------------------------------------------------------
-    def handle_serial_input(self, data):
-        data = data.strip()
-        logging.debug(f"Handling serial input: {data}")
-
-        if data == "PLAY":
-            self.control_playback("play")
-        elif data == "PAUSE":
-            self.control_playback("pause")
-        elif data == "NEXT":
-            self.control_playback("next")
-        elif data == "PREV":
-            self.control_playback("previous")
-        elif data == "FF":
-            self.control_playback("ff")
-        elif data == "RW":
-            self.control_playback("rw")
-        elif data == "RESTART_SERVICE":
-            os.system("systemctl restart bt-pulseaudio.service")
-        elif data == "ACCEPT_CALL":
-            self.accept_call()      # <---------------- Accept call
-        elif data == "REJECT_CALL":
-            self.reject_call()      # <---------------- Reject call
-        elif data.startswith("VOL+") or data.startswith("VOL-"):
-            try:
-                volume_level = int(data[4:])
-                if 0 <= volume_level <= 100:
-                    self.set_volume(volume_level)
-                    logging.debug(f"Volume level parsed: {volume_level}")
-                else:
-                    logging.error("Volume level out of range (0-100).")
-            except ValueError:
-                logging.error("Invalid volume command received.")
-        elif data.startswith("RESET"):
-            logging.info("Received RESET confirmation from Arduino.")
-        else:
-            logging.warning(f"Unrecognized command received: {data}")
-
-    def read_serial_callback(self, source, condition):
-        try:
-            if self.serial_conn.in_waiting > 0:
-                data = self.serial_conn.readline().decode('utf-8').strip()
-                if data:
-                    logging.debug(f"Received from Arduino: {data}")
-                    self.handle_serial_input(data)
-        except serial.SerialException as e:
-            logging.error(f"SerialException: {e}")
-            self.handle_serial_disconnect()
-        except Exception as e:
-            logging.error(f"Error reading from serial: {e}")
-            self.handle_serial_disconnect()
-        return True  # Keep the callback active
-
-
     def send_seek_percentage(self, position):
+        """
+        Calculate and send the seek percentage to the UIManager and serial device.
+
+        Args:
+            position (int): Current playback position in microseconds.
+        """
         if self.duration and self.duration > 0:
             seek_percentage = int((position / self.duration) * 100)
             seek_percentage = max(0, min(seek_percentage, 100))
-            self.send_to_serial("POS:" + str(seek_percentage))
+            # Update UIManager's currentPosition
+            #self.ui_manager.set_position(seek_percentage)
+            self.ui_manager.currentPosition = seek_percentage
             logging.info(f"Seek percentage: {seek_percentage}%")
         else:
             logging.warning("Duration not set. Cannot calculate seek percentage.")
@@ -502,33 +440,34 @@ class BluetoothManager:
         return True  # Return True to keep the timeout active
 
     def set_volume(self, level):
-        if 0 <= level <= 100:
-            scaled_volume = level * 2
-            scaled_volume_str = f"{scaled_volume}"
+        """
+        Set the system volume to the specified level.
 
-            try:
-                run(["pactl", "set-sink-volume", "@DEFAULT_SINK@", scaled_volume_str + "%"],
-                    check=True, stdout=PIPE)
-                self.send_to_serial("VOL:" + str(level))
-                logging.info(f"Volume set to {level}% (pactl volume: {scaled_volume_str}%)")
-            except CalledProcessError as e:
-                logging.error(f"Failed to set volume: {e}")
-                self.schedule_reset()
-        else:
-            logging.error("Volume level out of range (0-100).")
+        Args:
+            level (int): Volume level (0-100).
+        """
+        try:
+            if 0 <= level <= 100:
+                scaled_volume = level * 2  # Adjust scaling as needed
+                scaled_volume_str = f"{scaled_volume}%"
 
-    def handle_serial_disconnect(self):
-        if self.serial_conn and self.serial_conn.is_open:
-            try:
-                self.serial_conn.close()
-                logging.info("Serial connection closed due to disconnection.")
-            except Exception as e:
-                logging.error(f"Error closing serial connection: {e}")
-        else:
-            logging.debug("Serial connection already closed.")
-
-        self.serial_conn = None
-        self.schedule_reset()
+                run(
+                    ["pactl", "set-sink-volume", "@DEFAULT_SINK@", scaled_volume_str],
+                    check=True,
+                    stdout=PIPE,
+                    stderr=PIPE
+                )
+                logging.info(f"BluetoothManager: Volume set to {level}% (pactl volume: {scaled_volume_str})")
+                self.last_volume_level = level  # Update the last set volume
+            else:
+                logging.error("BluetoothManager: Volume level out of range (0-100).")
+        except CalledProcessError as e:
+            stderr_output = e.stderr.decode().strip() if e.stderr else "No stderr output."
+            logging.error(f"BluetoothManager: Failed to set volume: {stderr_output}")
+            self.schedule_reset()
+        except Exception as e:
+            logging.error(f"BluetoothManager: Error in set_volume: {e}")
+            self.schedule_reset()
 
     def schedule_reset(self):
         logging.info(f"Scheduling program reset in {self.reset_delay} seconds...")
@@ -564,49 +503,32 @@ class BluetoothManager:
 
         GLib.timeout_add_seconds(1, callback)
 
-    def start(self):
-        while True:
-            self.setup_bluetooth()
-            if not self.setup_serial():
-                logging.error("Serial setup failed. Retrying in 5 seconds...")
-                time.sleep(self.reset_delay)
-                continue
+    def run(self):
+        print("Starting Bluetooth Manager...")
 
-            if self.connected_device:
-                self.trust_device(self.connected_device)
+        # Setup Bluetooth
+        self.setup_bluetooth()
 
-            self.start_media_monitor()
-            self.list_managed_objects()
+        if self.connected_device:
+            self.trust_device(self.connected_device)
 
-            loop = GLib.MainLoop()
+        self.start_media_monitor()
+        self.list_managed_objects()
 
-            # Poll media info every 2 seconds
-            GLib.timeout_add_seconds(2, self.poll_media_info)
-            # Poll call info every 5 seconds
-            GLib.timeout_add_seconds(5, self.poll_call_info)
-            # Poll seek position every 1 second
-            GLib.timeout_add_seconds(2, self.send_seek_position)
+        loop = GLib.MainLoop()
 
-            # Add an IO watch for serial data
-            try:
-                fd = self.serial_conn.fileno()
-                GLib.io_add_watch(fd, GLib.IO_IN, self.read_serial_callback)
-                logging.info("Serial IO watch added.")
-            except Exception as e:
-                logging.error(f"Failed to add IO watch for serial: {e}")
-                self.schedule_reset()
+        # Poll media info every 2 seconds
+        GLib.timeout_add_seconds(2, self.poll_media_info)
+        # Poll call info every 5 seconds
+        GLib.timeout_add_seconds(5, self.poll_call_info)
+        # Poll seek position every 2 seconds
+        GLib.timeout_add_seconds(2, self.send_seek_position)
+        # # Poll and set volume every 1 second
+        # GLib.timeout_add(100, self.getset_volume)
 
-            logging.info("Bluetooth manager started and running.")
-            try:
-                loop.run()
-            except Exception as e:
-                logging.error(f"Main loop encountered an error: {e}")
-                self.schedule_reset()
-
-
-if __name__ == "__main__":
-    # Ensure pulseaudio is started
-    os.system("pulseaudio --start")
-
-    bt_manager = BluetoothManager()
-    bt_manager.start()
+        logging.info("Bluetooth manager started and running.")
+        try:
+            loop.run()
+        except Exception as e:
+            logging.error(f"Main loop encountered an error: {e}")
+            self.schedule_reset()

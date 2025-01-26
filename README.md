@@ -10,7 +10,6 @@
 |---------------------------------------|-----------------------------------------------------|
 | **RPI Zero 2 W**                      | Compact and powerful single-board computer          |
 | **Innomaker Raspberry Pi HiFi DAC MINI HAT PCM5122** | High-quality digital-to-analog converter for audio |
-| **Arduino Uno R4**                      | (Previously using Nano, ran out of flash...)        |
 | **2.42" OLED 1309**                   | OLED display for menu and song information         |
 | **LED Light**                         | Indicator light for system status                  |
 | **Rotary Encoder with Push Button**   | For volume control and navigation                  |
