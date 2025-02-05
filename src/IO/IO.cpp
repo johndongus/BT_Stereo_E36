@@ -71,7 +71,6 @@ int IOHandler::getVolume() const {
 void IOHandler::setVolume(int newVolume) {
     newVolume = std::max(0, std::min(newVolume, 100));
     volume.store(newVolume);
-    std::cout << "Volume set to " << newVolume << "\n";
     updateLED(newVolume);
 
     std::ostringstream cmd;
@@ -167,13 +166,13 @@ void IOHandler::pollInputs() {
         delta += step;
 
         auto now = std::chrono::steady_clock::now();
-        if (delta >= 2 && (now - lastStepTime) > std::chrono::milliseconds(3)) {
+        if (delta >= 4 && (now - lastStepTime) > std::chrono::milliseconds(5)) {
             lastStepTime = now;
             delta = 0;
             std::lock_guard<std::mutex> lock(click_mutex);
             if (rotate_callback)
                 rotate_callback(true);  // forward
-        } else if (delta <= -2 && (now - lastStepTime) > std::chrono::milliseconds(3)) {
+        } else if (delta <= -4 && (now - lastStepTime) > std::chrono::milliseconds(5)) {
             lastStepTime = now;
             delta = 0;
             std::lock_guard<std::mutex> lock(click_mutex);

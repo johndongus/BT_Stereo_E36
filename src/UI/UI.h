@@ -43,6 +43,9 @@ namespace GUI {
         ListBox currentList;
         ListBox settingsMenu; 
         ListBox mainMenu;
+        ListBox pairingMenu;
+        ListBox trustedDevicesMenu;
+        std::unordered_map<std::string, ListBox> deviceMenus;
         std::stack<ListBox> menuStack;
         std::mutex temp_msg_mutex;
         std::string temp_message;
@@ -84,7 +87,7 @@ namespace GUI {
 
     namespace Windows{
         void DrawStereo(SSD1309_SPI* display, BluetoothMedia& btMedia, IOHandler& ioHandler);
-        void InitializeMenus();
+        void InitializeMenus(BluetoothMedia& btMedia);
         void Draw_ListBox(SSD1309_SPI* display, const ListBox& listBox);
         void Draw_MediaScreen(SSD1309_SPI* display, const MediaInfo& mediaInfo, int song_progress);
         void Draw_CallScreen(SSD1309_SPI* display, const std::string& caller_number);

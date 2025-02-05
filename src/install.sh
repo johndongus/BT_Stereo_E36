@@ -7,6 +7,9 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+
+
+
 # Get the current (login) username.
 USERNAME=$(logname)
 echo "Using username: $USERNAME"
@@ -22,7 +25,7 @@ apt-get upgrade -y
 # Install Required Packages
 #############################
 echo "Installing required packages..."
-apt-get install -y bluez bluetooth pi-bluetooth pulseaudio pulseaudio-module-bluetooth ofono git cmake g++ pkg-config libbcm2835-dev libgpiod-dev bcm2835
+apt-get install -y bluez bluetooth pi-bluetooth pulseaudio pulseaudio-module-bluetooth ofono git cmake g++ pkg-config libbcm2835-dev libgpiod-dev
 
 
 ## Install PipeWire
@@ -30,6 +33,15 @@ apt-get install -y pipewire wireplumber libspa-0.2-bluetooth pipewire-pulse
 systemctl --user enable wireplumber
 systemctl --user enable pipewire-pulse.service
 systemctl --user enable pipewire.service
+
+# apt-get install easyeffects 
+# bash -c "$(curl -fsSL https://raw.githubusercontent.com/JackHack96/PulseEffects-Presets/master/install.sh)"
+# easyeffects --gapplication-service  // need to make a service for this
+# easyeffects -l "Loudness+Autogain" // this takes a second to proccess which kinda sucks..
+# john@raspberrypi:~/test $ easyeffects -p
+# Output Presets: Advanced Auto Gain,Bass Boosted,Bass Enhancing + Perfect EQ,Boosted,Laptop,Loudness+Autogain,Perfect EQ,
+# Input Presets:
+
 
 #############################
 # Modify /etc/dbus-1/system.d/ofono.conf

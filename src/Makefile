@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -O2 -Wextra -pedantic -I./SSD1309 -I./IO -I./UI -I./BT `pkg-config --cflags glib-2.0 gio-2.0`
+CXXFLAGS = -std=c++20 -Wall -O2 -Wextra -pedantic -I./SSD1309 -I./IO -I./UI -I./BT `pkg-config --cflags glib-2.0 gio-2.0`
 LDFLAGS = -fsanitize=address -lbcm2835  -lgpiodcxx -lrt -pthread `pkg-config --libs glib-2.0 gio-2.0`
  
 BUILD_DIR = build

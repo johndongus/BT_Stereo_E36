@@ -9,6 +9,8 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include <vector>
+#include <functional>
 
 class BluetoothAgent;
 
@@ -25,11 +27,21 @@ struct CallInfo {
     std::string contact;    // Contact name (if available)
 };
 
+struct PairingRequest {
+    std::string device_path;
+    std::string passkey;
+    bool requires_confirmation = false;
+    bool active = false;
+
+    std::function<void(bool)> respond; // Callback function to accept/reject
+};
+
+
 class BluetoothMedia {
 public:
     BluetoothMedia();
     ~BluetoothMedia();
-
+ bool auto_pairing_enabled = true;
     void setup_bluetooth();
     void start_media_monitor();
     MediaInfo get_media_info() ;
@@ -51,6 +63,9 @@ public:
     const int retry_interval_ms = 1000; 
     int last_song_progress;
     MediaInfo last_media_info;
+bool connect_to_device(const std::string& device_path);
+bool remove_trusted_device(const std::string& device_path);
+std::vector<std::string> get_trusted_devices();
 
     std::string get_playback_status(); // Retrieves current playback status
     std::string last_incoming_call_path;
@@ -67,11 +82,22 @@ public:
         bool is_media_player_connected() const {
         return !media_player_path.empty() && !is_disconnected.load();
     }
+    bool has_active_pairing_request() {
+        std::lock_guard<std::mutex> lock(pairing_mutex);
+         std::cout << "[DEBUG] Pairing flag is active for device: " << this->current_pairing_request.device_path << std::endl;
+        return current_pairing_request.active;
+    }
+        PairingRequest current_pairing_request;
+    std::mutex pairing_mutex;  // Ensure thread safety
+    void accept_pairing();
+    void reject_pairing();
 
 private:
     GDBusConnection* connection;
     GMainLoop* main_loop = nullptr;
     std::string media_player_path;
+
+
 
     std::string find_adapter_path();
     std::string find_media_player_path();

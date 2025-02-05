@@ -13,13 +13,6 @@
 #include "IO/IO.h"
 #include "BT/BT.h"
 
-
-//add brightness maybe with pwm flashing
-// add auto connect, easy implement.. but need to add remembering devices aswell / device list in menu
-// implement a config system
-//pipewire equalizer with presets and Bass and whatnot
-
-
 // Define GPIO Pins
 #define DC_PIN    25 // GPIO25 (Physical pin 22)
 #define RESET_PIN 5 // GPIO5 (Physical pin 29)
@@ -164,9 +157,15 @@ int main() {
         }
     });
 
-
-    GUI::Windows::InitializeMenus();
+  auto TrustedDevices = btMedia.get_trusted_devices();
+    for (auto& DevicePath : TrustedDevices){
+        printf("Trusted Device: %s\n", DevicePath.c_str());
+        //btMedia.connect_to_device();
+    }
+    GUI::Windows::InitializeMenus(btMedia);
     GUI::ui.showMedia();
+
+  
 
     while (!stop && !GUI::ui.exitFlag->load()) {
         btMedia.check_and_set_media_player_path();

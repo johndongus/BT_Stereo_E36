@@ -1,7 +1,7 @@
 #include "BT.h"
 #include <stdexcept>
 #include <thread>
-
+#include <algorithm>
 #define GVARIANT_TO_CSTR(var) (var ? g_variant_print(var, TRUE) : "(null)")
 
 #include <unordered_map>
@@ -959,6 +959,68 @@ BluetoothAgent::~BluetoothAgent() {
     }
 }
 
+// void BluetoothAgent::handle_method_call(
+//     GDBusConnection* connection,
+//     const gchar* sender,
+//     const gchar* object_path,
+//     const gchar* interface_name,
+//     const gchar* method_name,
+//     GVariant* parameters,
+//     GDBusMethodInvocation* invocation,
+//     gpointer user_data
+// ) {
+//     BluetoothMedia* media = static_cast<BluetoothMedia*>(user_data);
+
+//     std::lock_guard<std::mutex> lock(media->pairing_mutex);
+
+//     if (g_strcmp0(method_name, "RequestPinCode") == 0) {
+//         const char* device;
+//         g_variant_get(parameters, "(&o)", &device);
+
+//         std::cout << "[Bluetooth] Incoming pairing request from: " << device << std::endl;
+
+//         media->current_pairing_request = {
+//             .device_path = device,
+//             .passkey = "PIN_REQUIRED",
+//             .requires_confirmation = false,
+//             .active = true,
+//             .respond = [invocation](bool accept) {
+//                 if (accept) {
+//                     g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", "1234"));
+//                 } else {
+//                     g_dbus_method_invocation_return_dbus_error(invocation, "org.bluez.Error.Rejected", "User rejected pairing.");
+//                 }
+//             }
+//         };
+//     }
+//     else if (g_strcmp0(method_name, "RequestConfirmation") == 0) {
+//         const char* device;
+//         uint32_t passkey;
+//         g_variant_get(parameters, "(&ou)", &device, &passkey);
+
+//         std::cout << "[Bluetooth] Incoming pairing request from: " << device << std::endl;
+//         std::cout << "Passkey: " << passkey << std::endl;
+
+//         media->current_pairing_request = {
+//             .device_path = device,
+//             .passkey = std::to_string(passkey),
+//             .requires_confirmation = true,
+//             .active = true,
+//             .respond = [invocation](bool accept) {
+//                 if (accept) {
+//                     g_dbus_method_invocation_return_value(invocation, nullptr);
+//                 } else {
+//                     g_dbus_method_invocation_return_dbus_error(invocation, "org.bluez.Error.Rejected", "User rejected pairing.");
+//                 }
+//             }
+//         };
+//     }
+//     else {
+//         std::cerr << "[Bluetooth] Unknown method: " << method_name << std::endl;
+        
+
+//     }
+// }
 void BluetoothAgent::handle_method_call(
     GDBusConnection* connection,
     const gchar* sender,
@@ -1020,6 +1082,26 @@ void BluetoothAgent::handle_method_call(
             G_IO_ERROR_NOT_SUPPORTED,
             "Method '%s' is not supported",
             method_name);
+    }
+}
+
+void BluetoothMedia::accept_pairing() {
+    std::lock_guard<std::mutex> lock(pairing_mutex);
+
+    if (current_pairing_request.active && current_pairing_request.respond) {
+        current_pairing_request.respond(true);
+        std::cout << "[Bluetooth] Pairing accepted for " << current_pairing_request.device_path << std::endl;
+        current_pairing_request.active = false;
+    }
+}
+
+void BluetoothMedia::reject_pairing() {
+    std::lock_guard<std::mutex> lock(pairing_mutex);
+
+    if (current_pairing_request.active && current_pairing_request.respond) {
+        current_pairing_request.respond(false);
+        std::cout << "[Bluetooth] Pairing rejected for " << current_pairing_request.device_path << std::endl;
+        current_pairing_request.active = false;
     }
 }
 
@@ -1235,12 +1317,12 @@ void BluetoothMedia::setup_bluetooth() {
     if (!main_loop) {
         throw std::runtime_error("Failed to initialize main loop.");
     }
-g_timeout_add_seconds(3, [](gpointer user_data) -> gboolean {
-    BluetoothMedia* self = static_cast<BluetoothMedia*>(user_data);
-    self->poll_ofono_calls();
-    // returning TRUE means keep calling
-    return TRUE;
-}, this);
+    g_timeout_add_seconds(3, [](gpointer user_data) -> gboolean {
+        BluetoothMedia* self = static_cast<BluetoothMedia*>(user_data);
+        self->poll_ofono_calls();
+        // returning TRUE means keep calling
+        return TRUE;
+    }, this);
     std::thread loop_thread([this]() {
         std::cout << "Main loop thread started." << std::endl;
         g_main_loop_run(main_loop);
@@ -1798,4 +1880,136 @@ std::string BluetoothMedia::get_playback_status() {
     g_variant_unref(result);
 
     return status;
+}
+
+std::vector<std::string> BluetoothMedia::get_trusted_devices() {
+    std::vector<std::string> trusted_devices;
+    GError* error = nullptr;
+
+    GVariant* result = g_dbus_connection_call_sync(
+        connection,
+        "org.bluez",
+        "/",
+        "org.freedesktop.DBus.ObjectManager",
+        "GetManagedObjects",
+        nullptr,
+        G_VARIANT_TYPE("(a{oa{sa{sv}}})"),
+        G_DBUS_CALL_FLAGS_NONE,
+        -1,
+        nullptr,
+        &error
+    );
+
+    if (!result) {
+        std::cerr << "Failed to get managed objects: " << (error ? error->message : "Unknown error") << std::endl;
+        if (error) g_error_free(error);
+        return trusted_devices;
+    }
+
+    GVariantIter* objects;
+    const char* object_path;
+    GVariantIter* interfaces;
+    std::vector<std::pair<std::string, guint64>> device_list;
+
+    g_variant_get(result, "(a{oa{sa{sv}}})", &objects);
+
+    while (g_variant_iter_next(objects, "{oa{sa{sv}}}", &object_path, &interfaces)) {
+        const char* interface_name;
+        GVariantIter* properties;
+        bool trusted = false;
+        guint64 last_connected = 0;
+
+        while (g_variant_iter_next(interfaces, "{sa{sv}}", &interface_name, &properties)) {
+            if (std::string(interface_name) == "org.bluez.Device1") {
+                const char* property_name = nullptr;
+                GVariant* property_value = nullptr;
+
+                while (g_variant_iter_next(properties, "{sv}", &property_name, &property_value)) {
+                    if (std::string(property_name) == "Trusted") {
+                        trusted = g_variant_get_boolean(property_value);
+                    } else if (std::string(property_name) == "Connected") {
+                        if (g_variant_get_boolean(property_value)) {
+                            last_connected = g_get_real_time(); // Store current time for connected devices
+                        }
+                    }
+                    g_variant_unref(property_value);
+                }
+
+                if (trusted) {
+                    device_list.emplace_back(object_path, last_connected);
+                }
+
+                g_variant_iter_free(properties);
+            }
+        }
+        g_variant_iter_free(interfaces);
+    }
+
+    g_variant_iter_free(objects);
+    g_variant_unref(result);
+
+    // Sort devices by last connected time (most recent first)
+    std::sort(device_list.begin(), device_list.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second;
+    });
+
+    for (const auto& device : device_list) {
+        trusted_devices.push_back(device.first);
+    }
+
+    return trusted_devices;
+}
+bool BluetoothMedia::remove_trusted_device(const std::string& device_path) {
+    GError* error = nullptr;
+
+    GVariant* result = g_dbus_connection_call_sync(
+        connection,
+        "org.bluez",
+        device_path.c_str(),
+        "org.freedesktop.DBus.Properties",
+        "Set",
+        g_variant_new("(ssv)", "org.bluez.Device1", "Trusted", g_variant_new("b", false)),
+        nullptr,
+        G_DBUS_CALL_FLAGS_NONE,
+        -1,
+        nullptr,
+        &error
+    );
+
+    if (!result) {
+        std::cerr << "Failed to remove trust from device: " << (error ? error->message : "Unknown error") << std::endl;
+        if (error) g_error_free(error);
+        return false;
+    }
+
+    g_variant_unref(result);
+    std::cout << "Device " << device_path << " removed from trusted list." << std::endl;
+    return true;
+}
+bool BluetoothMedia::connect_to_device(const std::string& device_path) {
+    GError* error = nullptr;
+
+    GVariant* result = g_dbus_connection_call_sync(
+        connection,
+        "org.bluez",
+        device_path.c_str(),
+        "org.bluez.Device1",
+        "Connect",
+        nullptr,
+        nullptr,
+        G_DBUS_CALL_FLAGS_NONE,
+        -1,
+        nullptr,
+        &error
+    );
+
+    if (!result) {
+        std::cerr << "Failed to connect to device: " << (error ? error->message : "Unknown error") << std::endl;
+        if (error) g_error_free(error);
+        return false;
+    }
+
+    g_variant_unref(result);
+    std::cout << "Connected to device: " << device_path << std::endl;
+    return true;
 }
