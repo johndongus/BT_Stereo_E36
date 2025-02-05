@@ -2,6 +2,13 @@
 
 ![Current Image](https://i.imgur.com/qe3aNkL.jpeg)
 
+
+
+## Install
+```curl -sL https://raw.githubusercontent.com/johndongus/BT_Stereo_E36/main/src/install.sh | sudo bash```
+
+
+
 ---
 
 ## 📦 Parts List
@@ -18,7 +25,7 @@
 
 ## ✨ Features
 
-- **Bluetooth with Qualcomm aptX Support**  
+- **Bluetooth**  
 - **Volume Knob**  
 - **Menu System**  
 - **Song Information Display**  
@@ -39,18 +46,12 @@
   Enable voice input and hands-free calling.
 
 - **Equalizer Settings**  
-  Expand on existing menu for custom audio adjustments. Including finding a novel way to do equalization with pulseaudio, purely through command line. 
-  Note on this, `pactl load-module module-ladspa-sink sink_name=ladspa_out sink_master=@DEFAULT_SINK@ plugin=caps label=Eq10 control=0,0,0,0,0,0,0,0,0,0`
-  
-- **Brightness Fix for OLED 1309**  
-  Resolve brightness control issues with the display. Seems im not the only one with this issue on this paticular board.
-  `https://forum.pjrc.com/index.php?threads/how-does-one-control-the-brightness-of-an-oled-display-ssd1309.29265/`
+  Add General Equalizer, possibly using existing that has configs 
 
+- **Brightness Fix for OLED 1309**  
+  Fix brightness with SSD1309
+  
 - **PAN network sharing**
   This will give the pi network access via your connected device, probably..
 
----
 
-Additional Notes:
-Current Stereo Trim is for a BMW E36, but device can be used as a indepedent stereo, will make custom faceplates upon request in the repo. 🚗🎶
-This project assumes you have pulseaudio and the dac in a working state, with the dac set as the default sink, aswell as pulseaudio running on boot.

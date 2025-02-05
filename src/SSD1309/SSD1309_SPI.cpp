@@ -1,18 +1,22 @@
-// SSD1306_SPI.cpp
-#include "SSD1306_SPI.h"
+// SSD1309_SPI.cpp
+#include "SSD1309_SPI.h"
 #include <iostream>
+#include <string.h> 
 
 // Constructor
-SSD1306_SPI::SSD1306_SPI(uint8_t width, uint8_t height, SPIDevice& spiDevice, 
+SSD1309_SPI::SSD1309_SPI(uint8_t width, uint8_t height, SPIDevice& spiDevice, 
                          uint8_t dcPin, uint8_t resetPin)
-    : SSD1306_Base(width, height, false), spiDevice(spiDevice), 
+    : SSD1309_Base(width, height, false), spiDevice(spiDevice), 
       dc(dcPin), reset(resetPin), hasReset(resetPin != 255) {}
 
-SSD1306_SPI::~SSD1306_SPI() {
+SSD1309_SPI::~SSD1309_SPI() {
     // Destructor
 }
 
-bool SSD1306_SPI::initDisplay() {
+void SSD1309_SPI::clearDisplay(){
+    std::fill(buffer.begin(), buffer.end(), 0);
+}
+bool SSD1309_SPI::initDisplay() {
     // Initialize DC and Reset pins
     dc.begin();
     dc.setModeOutput();
@@ -52,17 +56,17 @@ bool SSD1306_SPI::initDisplay() {
     return true;
 }
 
-void SSD1306_SPI::writeCommand(uint8_t cmd) {
+void SSD1309_SPI::writeCommand(uint8_t cmd) {
     dc.write(false); // Command mode
     spiDevice.writeCommand(cmd);
 }
 
-void SSD1306_SPI::writeData(const std::vector<uint8_t>& data) {
+void SSD1309_SPI::writeData(const std::vector<uint8_t>& data) {
     dc.write(true); // Data mode
     spiDevice.write(data);
 }
 
-void SSD1306_SPI::resetSequence() {
+void SSD1309_SPI::resetSequence() {
     reset.write(false);
     bcm2835_delay(1); // 1 ms
     reset.write(true);

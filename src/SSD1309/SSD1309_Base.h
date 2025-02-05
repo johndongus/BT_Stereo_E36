@@ -1,6 +1,6 @@
-// SSD1306_Base.h
-#ifndef SSD1306_BASE_H
-#define SSD1306_BASE_H
+// SSD1309_Base.h
+#ifndef SSD1309_BASE_H
+#define SSD1309_BASE_H
 
 #include <cstdint>
 #include <vector>
@@ -9,10 +9,10 @@
 // Forward declaration
 class SPIDevice;
 
-class SSD1306_Base {
+class SSD1309_Base {
 public:
-    SSD1306_Base(uint8_t width, uint8_t height, bool externalVCC = false);
-    virtual ~SSD1306_Base();
+    SSD1309_Base(uint8_t width, uint8_t height, bool externalVCC = false);
+    virtual ~SSD1309_Base();
 
     virtual bool initDisplay() = 0;
     virtual void writeCommand(uint8_t cmd) = 0;
@@ -31,7 +31,8 @@ public:
     uint8_t width;
     uint8_t height;
     std::vector<uint8_t> buffer;
-
+    
+  
     void drawRect(uint8_t x, uint8_t y, uint8_t rectWidth, uint8_t rectHeight);
     void fillRect(uint8_t x, uint8_t y, uint8_t rectWidth, uint8_t rectHeight, bool fill = true);
     void drawCircle(uint8_t centerX, uint8_t centerY, uint8_t radius);
@@ -44,16 +45,12 @@ protected:
     bool isRotated = false;
     bool externalVCC;
     bool powerState;
-    // Helper function to set or clear a pixel
     void setPixel(uint8_t x, uint8_t y, bool value);
-
-    // Helper function to draw a pixel with integer coordinates (supports negative deltas for lines)
     void setPixelInt(int x, int y, bool value);
-
     void sendCommandSequence(const std::vector<uint8_t>& cmds, bool delay = 0);
 };
 
-// SSD1306 Commands
+// SSD1309 Commands
 const uint8_t SET_CONTRAST = 0x81;
 const uint8_t SET_ENTIRE_ON = 0xA4;
 const uint8_t SET_NORM_INV = 0xA6;
@@ -73,4 +70,4 @@ const uint8_t SET_PRECHARGE = 0xD9;
 const uint8_t SET_VCOM_DESEL = 0xDB;
 const uint8_t SET_CHARGE_PUMP = 0x8D;
 
-#endif // SSD1306_BASE_H
+#endif // SSD1309_BASE_H

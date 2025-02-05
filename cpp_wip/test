@@ -1,3 +1,0 @@
-sudo killall -9 ssd1306_spi
-make -j4
-sudo ./build/ssd1306_spi
