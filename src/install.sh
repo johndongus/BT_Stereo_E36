@@ -24,6 +24,13 @@ apt-get upgrade -y
 echo "Installing required packages..."
 apt-get install -y bluez bluetooth pi-bluetooth pulseaudio pulseaudio-module-bluetooth ofono git cmake g++ pkg-config libbcm2835-dev libgpiod-dev bcm2835
 
+
+## Install PipeWire
+apt-get install -y pipewire wireplumber libspa-0.2-bluetooth pipewire-pulse 
+systemctl --user enable wireplumber
+systemctl --user enable pipewire-pulse.service
+systemctl --user enable pipewire.service
+
 #############################
 # Modify /etc/dbus-1/system.d/ofono.conf
 #############################

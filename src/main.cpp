@@ -13,6 +13,13 @@
 #include "IO/IO.h"
 #include "BT/BT.h"
 
+
+//add brightness maybe with pwm flashing
+// add auto connect, easy implement.. but need to add remembering devices aswell / device list in menu
+// implement a config system
+//pipewire equalizer with presets and Bass and whatnot
+
+
 // Define GPIO Pins
 #define DC_PIN    25 // GPIO25 (Physical pin 22)
 #define RESET_PIN 5 // GPIO5 (Physical pin 29)

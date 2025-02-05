@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <sstream>
 #include <cstdlib>
+#include <pwd.h>  
 
 IOHandler::IOHandler(int clk_pin, int dt_pin, int sw_pin, int led_pin)
     : CLK_PIN(clk_pin), DT_PIN(dt_pin), SW_PIN(sw_pin), LED_PIN(led_pin),
@@ -65,6 +66,8 @@ int IOHandler::getVolume() const {
     return volume.load();
 }
 
+
+
 void IOHandler::setVolume(int newVolume) {
     newVolume = std::max(0, std::min(newVolume, 100));
     volume.store(newVolume);
@@ -72,15 +75,30 @@ void IOHandler::setVolume(int newVolume) {
     updateLED(newVolume);
 
     std::ostringstream cmd;
-    cmd << "sudo pactl set-sink-volume @DEFAULT_SINK@ " << newVolume << "%";
+    const char *sudoUser = std::getenv("SUDO_USER");
+    if (sudoUser) {
+        struct passwd *pw = getpwnam(sudoUser);
+        if (pw) {
+            uid_t uid = pw->pw_uid;
+            cmd << "sudo -H -u " << sudoUser
+                << " env XDG_RUNTIME_DIR=/run/user/" << uid
+                << " wpctl set-volume @DEFAULT_SINK@ " << newVolume << "%";
+        } else {
+            cmd << "wpctl set-volume @DEFAULT_SINK@ " << newVolume << "%";
+        }
+    } else {
+        cmd << "wpctl set-volume @DEFAULT_SINK@ " << newVolume << "%";
+    }
+
     int ret = system(cmd.str().c_str());
     if(ret != 0) {
-        std::cerr << "Error: pactl command failed with error code " << ret << "\n";
+        std::cerr << "Error: wpctl command failed with error code " << ret << "\n";
     } else {
-        std::cout << "BluetoothManager: Volume set to " << newVolume 
-                  << "% (pactl volume: " << newVolume << "%)" << std::endl;
+        std::cout << "Volume set to " << newVolume << "% using wpctl" << std::endl;
     }
 }
+
+
 
 void IOHandler::set_click_callback(std::function<void()> cb) {
     std::lock_guard<std::mutex> lock(click_mutex);
