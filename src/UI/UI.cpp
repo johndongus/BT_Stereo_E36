@@ -7,7 +7,19 @@
 #include <string>
 #include <chrono>        
 #include <thread>
+#include <cstdlib>  
 
+std::string get_username() {
+    const char* user = std::getenv("USER");
+    return user ? std::string(user) : "default_user";
+}
+void PlaySound(const std::string& soundFile) {
+    std::string username = get_username();
+    std::string command = "aplay /home/" + username + "/Sounds/"+soundFile;
+    if (std::system(command.c_str()) != 0) {
+        std::cerr << "Error playing sound using command: " << command << std::endl;
+    }
+}
 namespace GUI {
     UIManager ui; // UI class instance
 
@@ -144,61 +156,70 @@ namespace GUI {
             display->fillRect(x + 1, y + 1, filled_width, height - 2, true);
         }
 
-        void Draw_MediaScreen(SSD1309_SPI* display, const MediaInfo& mediaInfo, int song_progress) {
-            // Draw the seek bar
-            int seekBarHeight = 2;
-            int progressWidth = (song_progress * display->width) / 100;
-            display->fillRect(0, 0, display->width, seekBarHeight, false); 
-            if (progressWidth > 0) {
-                display->fillRect(0, 0, progressWidth, seekBarHeight, true);
-            }
-
-            std::string songName = mediaInfo.title;
-            std::string artistName = mediaInfo.artist;
-
-            int songTextWidth = songName.length() * 12;   
-            int artistTextWidth = artistName.length() * 6; 
-
-            isSongScrolling = songTextWidth > display->width;
-            isArtistScrolling = artistTextWidth > display->width;
-
-            if (isSongScrolling) {
-                songScrollX -= SCROLL_SPEED;
-                if (songScrollX < -songTextWidth) {
-                    songScrollX = display->width + SPACE_BETWEEN;
-                }
-            } else {
-                songScrollX = (display->width - songTextWidth) / 2.0f;
-            }
-
-            if (isArtistScrolling) {
-                artistScrollX -= SCROLL_SPEED;
-                if (artistScrollX < -artistTextWidth) {
-                    artistScrollX = display->width + SPACE_BETWEEN;
-                }
-            } else {
-                artistScrollX = (display->width - artistTextWidth) / 2.0f;
-            }
-
-            int songY = seekBarHeight + 4;
-            int artistY = songY + 20;
-            int indicatorY = artistY + 15;
-            int songHeight = 24;    // 12 * 2
-            int artistHeight = 12;
-            int indicatorHeight = 12;
-
-            display->fillRect(0, songY, display->width, songHeight, false);
-            display->fillRect(0, artistY, display->width, artistHeight, false);
-            display->fillRect(0, indicatorY, display->width, indicatorHeight, false);
-
-            display->drawText(static_cast<int>(songScrollX), songY, songName, 2.0f);
-            display->drawString(static_cast<int>(artistScrollX), artistY, artistName);
-
-            std::string indicator = (mediaInfo.status == "playing") ? "||" : ">";
-            int indicatorWidth = indicator.length() * 6;
-            int indicatorX = (display->width - indicatorWidth) / 2.0f;
-            display->drawText(indicatorX, indicatorY, indicator, 1.0f);
+    void Draw_MediaScreen(SSD1309_SPI* display, const MediaInfo& mediaInfo, int song_progress) {
+        // seek bar
+        int seekBarHeight = 2;
+        int progressWidth = (song_progress * display->width) / 100;
+        display->fillRect(0, 0, display->width, seekBarHeight, false); 
+        if (progressWidth > 0) {
+            display->fillRect(0, 0, progressWidth, seekBarHeight, true);
         }
+
+        std::string songName = mediaInfo.title;
+        std::string artistName = mediaInfo.artist;
+
+        const int horizontalPadding = 10;
+        int availableWidth = display->width - horizontalPadding;
+
+        float defaultSongScale = 2.0f;
+        float defaultArtistScale = 1.0f;
+        float songScale = defaultSongScale;
+        float artistScale = defaultArtistScale;
+
+        int songTextWidth = static_cast<int>(songName.length() * 6 * defaultSongScale);
+        int artistTextWidth = static_cast<int>(artistName.length() * 6 * defaultArtistScale);
+
+
+        if (!songName.empty() && songTextWidth > availableWidth) {
+            songScale = static_cast<float>(availableWidth) / (songName.length() * 6);
+            songTextWidth = static_cast<int>(songName.length() * 6 * songScale);
+        }
+
+
+        if (!artistName.empty() && artistTextWidth > availableWidth) {
+            artistScale = static_cast<float>(availableWidth) / (artistName.length() * 6);
+            artistTextWidth = static_cast<int>(artistName.length() * 6 * artistScale);
+        }
+
+
+        int songX = (display->width - songTextWidth) / 2;
+        int artistX = (display->width - artistTextWidth) / 2;
+
+
+        int songY = seekBarHeight + 4; 
+        int artistY = songY + 20;         
+        int indicatorY = artistY + 15;     
+
+
+        int songHeight = 24;    
+        int artistHeight = 12;  
+        int indicatorHeight = 12;
+        display->fillRect(0, songY, display->width, songHeight, false);
+        display->fillRect(0, artistY, display->width, artistHeight, false);
+        display->fillRect(0, indicatorY, display->width, indicatorHeight, false);
+
+
+        display->drawText(songX, songY, songName, songScale);
+        display->drawText(artistX, artistY, artistName, artistScale);
+
+
+        std::string indicator = (mediaInfo.status == "playing") ? "||" : ">";
+        int indicatorWidth = indicator.length() * 6;  // Base width.
+        int indicatorX = (display->width - indicatorWidth) / 2;
+        display->drawText(indicatorX, indicatorY, indicator, 1.0f);
+    }
+
+
 
         void Draw_CallScreen(SSD1309_SPI* display, const std::string& caller_number) {
             display->drawString(0, 0, "Incoming Call");
@@ -213,6 +234,22 @@ namespace GUI {
             static int lastSongProgress = -1;
             static int lastVolume = -1;
             static ListBox lastListBox;
+
+            static bool wasConnected = false; // Track last connection state
+             bool isConnected = btMedia.is_media_player_connected();
+
+            if (isConnected && !wasConnected) {
+                // Device just connected
+                PlaySound("game-sound-fx-turn-on_A_minor.wav");  
+                std::cout << "[DEBUG] Bluetooth connected! Playing connect.wav\n";
+            } 
+            else if (!isConnected && wasConnected) {
+                // Device just disconnected
+                PlaySound("game-sound-fx-turn-off_D_major.wav");  
+                std::cout << "[DEBUG] Bluetooth disconnected! Playing disconnect.wav\n";
+            }
+
+            wasConnected = isConnected;  // Update state tracking
 
             if (!initialized) {
                 InitializeMenus(btMedia);

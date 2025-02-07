@@ -574,6 +574,47 @@ g_dbus_connection_signal_subscribe(
         nullptr
     );
 
+        g_dbus_connection_signal_subscribe(
+        connection,
+        "org.bluez",
+        "org.freedesktop.DBus.Properties",
+        "PropertiesChanged",
+        nullptr,
+        "org.bluez.Device1",
+        G_DBUS_SIGNAL_FLAGS_NONE,
+        [](GDBusConnection* /*conn*/,
+        const gchar* /*sender*/,
+        const gchar* object_path,
+        const gchar* interface_name,
+        const gchar* /*signal_name*/,
+        GVariant* parameters,
+        gpointer user_data)
+        {
+            // You can inspect the changed properties
+            GVariantIter *iter = nullptr;
+            const gchar *changed_iface = nullptr;
+            g_variant_get(parameters, "(sa{sv}as)", &changed_iface, &iter, nullptr);
+            if (std::string(changed_iface) == "org.bluez.Device1") {
+                const gchar* prop = nullptr;
+                GVariant* value = nullptr;
+                while (g_variant_iter_next(iter, "{sv}", &prop, &value)) {
+                    if (std::string(prop) == "Connected") {
+                        bool connected = g_variant_get_boolean(value);
+                        if (!connected) {
+                            std::cout << "Device " << object_path << " disconnected." << std::endl;
+                            // Set your internal flag or clear cached paths as needed.
+                        }
+                    }
+                    g_variant_unref(value);
+                }
+                g_variant_iter_free(iter);
+            }
+        },
+        this,
+        nullptr
+    );
+
+
     std::cout << "Subscribed to InterfacesRemoved signals.\n";
     g_dbus_connection_signal_subscribe(
         connection,
@@ -1461,7 +1502,7 @@ bool BluetoothMedia::check_and_set_media_player_path() {
 
 // Get media information
 MediaInfo BluetoothMedia::get_media_info()  {
-     MediaInfo info = {"No song playing", "Unknown Artist", 0, 0, "paused"};
+     MediaInfo info = {"", "", 0, 0, "paused"};
 
     if (media_player_path.empty()) {
         std::cout << "No MediaPlayer path available." << std::endl;
@@ -1509,9 +1550,13 @@ if (!result) {
             const char* artist = nullptr;
             guint32 duration_ms = 0;
 
+
+
             // Extract 'Title', 'Artist', and 'Duration' from the 'Track' dictionary
             g_variant_lookup(value, "Title", "&s", &title);
-            g_variant_lookup(value, "Artist", "&s", &artist);
+            if (g_variant_lookup(value, "Artist", "&s", &artist) && artist && strlen(artist) > 0) {
+                    info.artist = std::string(artist);
+            }
             g_variant_lookup(value, "Duration", "u", &duration_ms);
 
             if (title) {
